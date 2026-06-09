@@ -186,12 +186,26 @@ export default function App() {
     [projects, myProjectIds]
   );
 
+  // employees filtered by active project (for timesheet)
+  const empsOnProject = useMemo(() => {
+    if (!activeProj) return employees; // brak projektu = wszyscy
+    // zbierz ID pracownikow z godzinami na tym projekcie (cały czas, nie tylko bieżący miesiąc)
+    const empIdsWithHours = new Set(
+      Object.keys(hoursMap)
+        .filter(k => k.startsWith(activeProj + "|"))
+        .map(k => k.split("|")[1])
+    );
+    if (empIdsWithHours.size === 0) return employees; // brak godzin = pokaż wszystkich
+    return employees.filter(e => empIdsWithHours.has(e.id));
+  }, [employees, activeProj, hoursMap]);
+
   const filteredEmps = useMemo(() => {
     const q = searchQ.toLowerCase();
-    return employees.filter(e =>
+    const base = empsOnProject;
+    return base.filter(e =>
       `${e.first_name} ${e.last_name}`.toLowerCase().includes(q)
     );
-  }, [employees, searchQ]);
+  }, [empsOnProject, searchQ]);
 
   const days = daysInMonth(year, month);
   const isAdmin = currentManager?.is_admin;
@@ -542,11 +556,11 @@ export default function App() {
               : (<>
                   <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
                     <span style={{ fontSize:11, color:C.gray5, fontWeight:500 }}>Projekt</span>
-                    <select className="inp" value={activeProj||""} onChange={e=>setActiveProj(e.target.value)}
+                    <select className="inp" value={activeProj||""} onChange={e=>setActiveProj(e.target.value||null)}
                       style={{ width:260, padding:"7px 10px", fontSize:13, fontWeight:500, color:C.gray7,
                                borderColor:activeProj?C.blue:C.gray3,
                                boxShadow:activeProj?`0 0 0 3px ${C.blueLight}`:"none" }}>
-                      <option value="" disabled>— wybierz projekt —</option>
+                      <option value="">— wszyscy pracownicy —</option>
                       {[...myProjects].sort((a,b)=>(a.number||'').localeCompare(b.number||'', 'pl', {numeric:true})).map(p=>(
                         <option key={p.id} value={p.id}>
                           {p.number?`[${p.number}] ${p.name}`:p.name}
@@ -569,9 +583,7 @@ export default function App() {
           </div>
 
           {/* grid */}
-          {!activeProj
-            ? <div style={{ padding:40, color:C.gray4 }}>Wybierz projekt powyżej.</div>
-            : (
+          {(
             <div style={{ flex:1, overflow:"auto" }}>
               <table style={{ borderCollapse:"collapse", minWidth:"100%", fontSize:12 }}>
                 <thead style={{ position:"sticky", top:0, zIndex:10 }}>
