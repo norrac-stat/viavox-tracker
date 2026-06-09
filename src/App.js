@@ -195,23 +195,24 @@ export default function App() {
   // employees filtered by active project (for timesheet)
   const empsOnProject = useMemo(() => {
     if (!activeProj) return employees; // brak projektu = wszyscy
-    // zbierz ID pracownikow z godzinami na tym projekcie (cały czas, nie tylko bieżący miesiąc)
     const empIdsWithHours = new Set(
       Object.keys(hoursMap)
         .filter(k => k.startsWith(activeProj + "|"))
         .map(k => k.split("|")[1])
     );
-    if (empIdsWithHours.size === 0) return employees; // brak godzin = pokaż wszystkich
+    if (empIdsWithHours.size === 0) return employees;
     return employees.filter(e => empIdsWithHours.has(e.id));
   }, [employees, activeProj, hoursMap]);
 
   const filteredEmps = useMemo(() => {
-    const q = searchQ.toLowerCase();
-    const base = empsOnProject;
+    const q = searchQ.toLowerCase().trim();
+    // jeśli jest wyszukiwanie — szukaj wśród WSZYSTKICH pracowników
+    // jeśli brak wyszukiwania — filtruj po projekcie
+    const base = q ? employees : empsOnProject;
     return base.filter(e =>
       `${e.first_name} ${e.last_name}`.toLowerCase().includes(q)
     );
-  }, [empsOnProject, searchQ]);
+  }, [empsOnProject, employees, searchQ]);
 
   const days = daysInMonth(year, month);
   const isAdmin = currentManager?.is_admin;
