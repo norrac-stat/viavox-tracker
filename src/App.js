@@ -131,6 +131,9 @@ export default function App() {
   const [fMgrPin,   setFMgrPin]   = useState("");
   const [fMgrProjs, setFMgrProjs] = useState([]);
   const [editingMgr,setEditingMgr]= useState(null);
+  const [importRows,  setImportRows]  = useState([]); // parsed preview rows
+  const [importing,   setImporting]   = useState(false);
+  const importFileRef = useRef(null);
 
   const { toast, show: showToast } = useToast();
 
@@ -340,6 +343,93 @@ export default function App() {
     setModal("editMgr");
   }
 
+  // ── Import helpers ───────────────────────────────────────────────────────
+  function parseCSVLine(line) {
+    const result = []; let cur = ""; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === ',' && !inQ) { result.push(cur.trim()); cur = ""; }
+      else cur += ch;
+    }
+    result.push(cur.trim());
+    return result;
+  }
+
+  function handleImportFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target.result;
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      // skip header row (first line)
+      const rows = lines.slice(1).map(line => {
+        const cols = parseCSVLine(line);
+        return {
+          name:    (cols[0]||"").trim(),
+          number:  (cols[1]||"").trim(),
+          mgr1:    (cols[2]||"").trim(),
+          mgr2:    (cols[3]||"").trim(),
+          mgr3:    (cols[4]||"").trim(),
+        };
+      }).filter(r => r.name);
+      setImportRows(rows);
+    };
+    reader.readAsText(file, "UTF-8");
+  }
+
+  async function runImport() {
+    if (importRows.length === 0) return;
+    setImporting(true);
+    let projAdded = 0, mgrAdded = 0;
+    for (const row of importRows) {
+      // upsert project
+      let projId;
+      const existingProj = projects.find(p => p.name === row.name && p.number === row.number);
+      if (existingProj) {
+        projId = existingProj.id;
+      } else {
+        const { data } = await supabase.from("projects")
+          .insert({ name: row.name, number: row.number })
+          .select().single();
+        if (data) { projId = data.id; setProjects(prev => [...prev, data]); projAdded++; }
+      }
+      if (!projId) continue;
+
+      // process managers
+      for (const mgrName of [row.mgr1, row.mgr2, row.mgr3].filter(Boolean)) {
+        let mgr = managers.find(m => m.name === mgrName);
+        if (!mgr) {
+          const { data } = await supabase.from("managers")
+            .insert({ name: mgrName, pin: "1234", is_admin: false })
+            .select().single();
+          if (data) { mgr = data; setManagers(prev => [...prev, data]); mgrAdded++; }
+        }
+        if (!mgr) continue;
+        // assign if not already
+        const alreadyAssigned = mgrProjects.some(mp => mp.manager_id === mgr.id && mp.project_id === projId);
+        if (!alreadyAssigned) {
+          await supabase.from("manager_projects").insert({ manager_id: mgr.id, project_id: projId });
+          setMgrProjects(prev => [...prev, { manager_id: mgr.id, project_id: projId }]);
+        }
+      }
+      // admin always gets access
+      if (currentManager?.is_admin) {
+        const alreadyAdmin = mgrProjects.some(mp => mp.manager_id === currentManager.id && mp.project_id === projId);
+        if (!alreadyAdmin) {
+          await supabase.from("manager_projects").insert({ manager_id: currentManager.id, project_id: projId });
+          setMgrProjects(prev => [...prev, { manager_id: currentManager.id, project_id: projId }]);
+        }
+      }
+    }
+    setImporting(false);
+    setModal(null);
+    setImportRows([]);
+    if (importFileRef.current) importFileRef.current.value = "";
+    showToast(`Zaimportowano: ${projAdded} projektów, ${mgrAdded} nowych kierowników`);
+  }
+
   function prevMonth() { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); }
   function nextMonth() { if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); }
 
@@ -456,7 +546,7 @@ export default function App() {
                                borderColor:activeProj?C.blue:C.gray3,
                                boxShadow:activeProj?`0 0 0 3px ${C.blueLight}`:"none" }}>
                       <option value="" disabled>— wybierz projekt —</option>
-                      {myProjects.map(p=>(
+                      {[...myProjects].sort((a,b)=>(a.number||'').localeCompare(b.number||'', 'pl', {numeric:true})).map(p=>(
                         <option key={p.id} value={p.id}>
                           {p.number?`[${p.number}] ${p.name}`:p.name}
                         </option>
@@ -626,37 +716,68 @@ export default function App() {
 
       {/* ═══ PROJECTS ═══ */}
       {tab==="projects"&&isAdmin&&(
-        <div style={{ padding:"24px 28px", maxWidth:640 }}>
-          <div style={{ display:"flex", alignItems:"center", marginBottom:20 }}>
+        <div style={{ padding:"24px 28px", maxWidth:1100 }}>
+          <div style={{ display:"flex", alignItems:"center", marginBottom:20, gap:10 }}>
             <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Projekty</div>
-            <button className="btn btn-sm" style={{ marginLeft:"auto" }} onClick={()=>setModal("addProj")}>+ Dodaj projekt</button>
+            <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+              <button className="btn-ghost btn-sm" onClick={()=>setModal("importProj")}>⬆ Importuj z Excel/CSV</button>
+              <button className="btn btn-sm" onClick={()=>setModal("addProj")}>+ Dodaj projekt</button>
+            </div>
           </div>
-          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            {projects.map(p=>{
-              const total=projTotal(p.id);
-              const empCount=employees.filter(e=>empTotal(p.id,e.id)>0).length;
-              const mgrs=managers.filter(m=>mgrProjects.some(mp=>mp.manager_id===m.id&&mp.project_id===p.id)&&!m.is_admin);
-              return (
-                <div key={p.id} onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}
-                  style={{ padding:"16px 18px", background:C.white, border:`1px solid ${C.gray3}`,
-                           borderRadius:10, cursor:"pointer", transition:"border-color .15s" }}
-                  onMouseEnter={e=>e.currentTarget.style.borderColor=C.blue}
-                  onMouseLeave={e=>e.currentTarget.style.borderColor=C.gray3}>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                    <div style={{ display:"flex", alignItems:"baseline", gap:10 }}>
-                      <div style={{ fontWeight:600, fontSize:15, color:C.gray7 }}>{p.name}</div>
-                      {p.number&&<div style={{ fontSize:12, color:C.gray4 }}>nr {p.number}</div>}
-                    </div>
-                    <div style={{ color:C.blue, fontWeight:700 }}>{total>0?`${total}h`:"—"}</div>
-                  </div>
-                  <div style={{ marginTop:8, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-                    <span style={{ fontSize:11, color:C.gray4 }}>{empCount} aktywnych pracowników</span>
-                    {mgrs.map(m=><span key={m.id} className="proj-chip" style={{ fontSize:10 }}>{m.name}</span>)}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+            <thead>
+              <tr style={{ background:C.gray2, borderBottom:`2px solid ${C.gray3}` }}>
+                <th style={{ padding:"9px 12px", textAlign:"left", fontWeight:600, color:C.gray5, fontSize:11, width:60 }}>NR</th>
+                <th style={{ padding:"9px 12px", textAlign:"left", fontWeight:600, color:C.gray5, fontSize:11 }}>NAZWA PROJEKTU</th>
+                <th style={{ padding:"9px 12px", textAlign:"left", fontWeight:600, color:C.gray5, fontSize:11 }}>KIEROWNICY</th>
+                <th style={{ padding:"9px 12px", textAlign:"center", fontWeight:600, color:C.gray5, fontSize:11, width:80 }}>PRAC.</th>
+                <th style={{ padding:"9px 12px", textAlign:"center", fontWeight:600, color:C.gray5, fontSize:11, width:80 }}>GODZ.</th>
+                <th style={{ padding:"9px 12px", width:40 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...projects].sort((a,b)=>(a.number||'').localeCompare(b.number||'', 'pl', {numeric:true})).map((p,ri)=>{
+                const total=projTotal(p.id);
+                const empCount=employees.filter(e=>empTotal(p.id,e.id)>0).length;
+                const mgrs=managers.filter(m=>mgrProjects.some(mp=>mp.manager_id===m.id&&mp.project_id===p.id)&&!m.is_admin);
+                const rowBg = ri%2===0 ? C.white : "#F8FAFC";
+                return (
+                  <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}`, cursor:"pointer" }}
+                    onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.blueLight}
+                    onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
+                    <td style={{ padding:"8px 12px", color:C.gray4, fontWeight:500, whiteSpace:"nowrap" }}>{p.number||"—"}</td>
+                    <td style={{ padding:"8px 12px", fontWeight:600, color:C.gray7 }}>{p.name}</td>
+                    <td style={{ padding:"8px 12px" }}>
+                      <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+                        {mgrs.length===0
+                          ? <span style={{ color:C.gray3, fontSize:11 }}>—</span>
+                          : mgrs.map(m=>(
+                            <span key={m.id} style={{ background:C.blueLight, color:C.blueDark,
+                              fontSize:10, padding:"2px 7px", borderRadius:20, fontWeight:500, whiteSpace:"nowrap" }}>
+                              {m.name}
+                            </span>
+                          ))
+                        }
+                      </div>
+                    </td>
+                    <td style={{ padding:"8px 12px", textAlign:"center", color:empCount>0?C.gray6:C.gray3, fontSize:12 }}>{empCount||"—"}</td>
+                    <td style={{ padding:"8px 12px", textAlign:"center", color:total>0?C.blue:C.gray3, fontWeight:600, fontSize:12 }}>{total>0?`${total}h`:"—"}</td>
+                    <td style={{ padding:"8px 12px", textAlign:"center" }} onClick={e=>e.stopPropagation()}>
+                      <button className="btn-danger" style={{ padding:"3px 8px", fontSize:11 }}
+                        onClick={async()=>{ if(!window.confirm(`Usunąć projekt "${p.name}"?`)) return;
+                          await supabase.from("projects").delete().eq("id",p.id);
+                          setProjects(prev=>prev.filter(x=>x.id!==p.id));
+                          setMgrProjects(prev=>prev.filter(mp=>mp.project_id!==p.id));
+                          if(activeProj===p.id) setActiveProj(null);
+                          showToast("Projekt usunięty");
+                        }}>✕</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -815,7 +936,7 @@ export default function App() {
             <div>
               <label className="lbl">Przypisz projekty</label>
               <div className="checkbox-grid">
-                {projects.map(p=>{ const checked=fMgrProjs.includes(p.id); return (
+                {[...projects].sort((a,b)=>(a.number||'').localeCompare(b.number||'', 'pl', {numeric:true})).map(p=>{ const checked=fMgrProjs.includes(p.id); return (
                   <label key={p.id} className="cb-item">
                     <input type="checkbox" checked={checked}
                       onChange={()=>setFMgrProjs(prev=>checked?prev.filter(x=>x!==p.id):[...prev,p.id])} />
@@ -829,6 +950,66 @@ export default function App() {
                 {modal==="addMgr"?"Dodaj kierownika":"Zapisz zmiany"}
               </button>
               <button className="btn-ghost" onClick={()=>setModal(null)}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal==="importProj"&&(
+        <div className="modal-bg" onClick={()=>{setModal(null);setImportRows([]);}}>
+          <div className="modal modal-wide" onClick={e=>e.stopPropagation()} style={{ maxHeight:"80vh", overflow:"auto" }}>
+            <div style={{ fontWeight:700, fontSize:18, color:C.gray7 }}>Import projektów z CSV</div>
+            <div style={{ background:C.blueLight, border:`1px solid ${C.blueMid}`, borderRadius:8, padding:14, fontSize:12, color:C.blueDark }}>
+              <strong>Format pliku CSV:</strong> Nazwa projektu, Numer projektu, Kierownik 1, Kierownik 2, Kierownik 3<br/>
+              Pierwszy wiersz to nagłówek — zostanie pominięty.<br/>
+              Nowi kierownicy dostaną domyślny PIN: <strong>1234</strong> (zmień po imporcie).
+            </div>
+            <div>
+              <label className="lbl">Wybierz plik CSV</label>
+              <input ref={importFileRef} type="file" accept=".csv,.txt" className="inp"
+                style={{ padding:"7px 10px", cursor:"pointer" }}
+                onChange={handleImportFile} />
+              <div style={{ fontSize:11, color:C.gray4, marginTop:5 }}>
+                Możesz też otworzyć plik Excel i zapisać jako CSV (UTF-8) przed importem.
+              </div>
+            </div>
+            {importRows.length>0&&(
+              <div>
+                <div style={{ fontSize:12, color:C.gray5, marginBottom:8, fontWeight:500 }}>
+                  Podgląd — {importRows.length} wierszy do importu:
+                </div>
+                <div style={{ maxHeight:260, overflow:"auto", border:`1px solid ${C.gray3}`, borderRadius:8 }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                    <thead>
+                      <tr style={{ background:C.gray2 }}>
+                        {["Nazwa","Numer","Kierownik 1","Kierownik 2","Kierownik 3"].map(h=>(
+                          <th key={h} style={{ padding:"7px 10px", textAlign:"left", fontWeight:600,
+                                               color:C.gray5, borderBottom:`1px solid ${C.gray3}` }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importRows.map((r,i)=>(
+                        <tr key={i} style={{ background:i%2===0?C.white:"#F8FAFC", borderBottom:`1px solid ${C.gray2}` }}>
+                          <td style={{ padding:"6px 10px", fontWeight:500, color:C.gray7 }}>{r.name}</td>
+                          <td style={{ padding:"6px 10px", color:C.gray5 }}>{r.number||"—"}</td>
+                          <td style={{ padding:"6px 10px", color:C.blue }}>{r.mgr1||"—"}</td>
+                          <td style={{ padding:"6px 10px", color:C.blue }}>{r.mgr2||"—"}</td>
+                          <td style={{ padding:"6px 10px", color:C.blue }}>{r.mgr3||"—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+              <button className="btn" onClick={runImport}
+                disabled={importRows.length===0||importing}>
+                {importing?<><span className="spinner" style={{width:14,height:14,marginRight:6}}/>Importuję…</>
+                          :`Importuj ${importRows.length} projektów`}
+              </button>
+              <button className="btn-ghost" onClick={()=>{setModal(null);setImportRows([]);}}>Anuluj</button>
             </div>
           </div>
         </div>
