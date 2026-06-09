@@ -675,13 +675,11 @@ export default function App() {
 
       {/* ═══ EMPLOYEES ═══ */}
       {tab==="employees" && (()=>{
-        // build last 6 months list
-        const monthCols = [];
-        for (let i=5; i>=0; i--) {
-          let y=year, m=month-i;
-          while(m<0){m+=12;y--;}
-          monthCols.push({y, m, key:`${y}-${String(m+1).padStart(2,"0")}`});
-        }
+        // fixed months: June–December of current year
+        const monthCols = [5,6,7,8,9,10,11].map(m => ({
+          y: year, m,
+          key: `${year}-${String(m+1).padStart(2,"0")}`
+        }));
         const PL_MONTHS_SHORT = ["Sty","Lut","Mar","Kwi","Maj","Cze","Lip","Sie","Wrz","Paź","Lis","Gru"];
 
         // hours for a specific month key
