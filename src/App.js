@@ -459,7 +459,8 @@ export default function App() {
     reader.onload = async (ev) => {
       try {
         // dynamically import xlsx library
-        const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+        const XLSX = window.XLSX;
+        if (!XLSX) { showToast("Błąd: biblioteka XLSX nie załadowana", "err"); return; }
         const wb   = XLSX.read(ev.target.result, { type:"array" });
         const ws   = wb.Sheets[wb.SheetNames[0]];
         const raw  = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
@@ -572,7 +573,8 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = async (ev) => {
       try {
-        const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+        const XLSX = window.XLSX;
+        if (!XLSX) { showToast("Błąd: biblioteka XLSX nie załadowana", "err"); return; }
         const wb   = XLSX.read(ev.target.result, { type:"array" });
         const ws   = wb.Sheets[wb.SheetNames[0]];
         const raw  = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
