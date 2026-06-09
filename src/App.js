@@ -1153,54 +1153,186 @@ export default function App() {
       )}
 
       {/* ═══ REPORT ═══ */}
-      {tab==="report"&&(
-        <div style={{ padding:"24px 28px", maxWidth:700 }}>
-          <div style={{ fontWeight:700, fontSize:20, color:C.gray7, marginBottom:16 }}>
-            Raport — {MONTHS[month]} {year}
+      {tab==="report"&&(()=>{
+        // ── obliczenia ────────────────────────────────────────────────────────
+        const totalAllH   = myProjects.reduce((s,p)=>s+projTotal(p.id),0);
+        const studentEmps = employees.filter(e=>e.is_student);
+        const workerEmps  = employees.filter(e=>!e.is_student);
+
+        const studentH = myProjects.reduce((s,p)=>
+          s+studentEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0);
+        const workerH  = myProjects.reduce((s,p)=>
+          s+workerEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0);
+
+        const activeEmps  = employees.filter(e=>
+          myProjects.some(p=>empTotal(p.id,e.id)>0));
+        const activeStudents = activeEmps.filter(e=>e.is_student).length;
+        const activeWorkers  = activeEmps.filter(e=>!e.is_student).length;
+
+        // godziny per dzień (suma wszystkich projektów)
+        const dailyH = Array.from({length:daysInMonth(year,month)},(_,i)=>{
+          const d=i+1;
+          return { d, h: myProjects.reduce((s,p)=>s+dayTotal(p.id,d),0) };
+        });
+        const maxDay = Math.max(...dailyH.map(x=>x.h),1);
+
+        // projekty posortowane po godzinach malejąco
+        const projRows = [...myProjects]
+          .map(p=>({ p, h:projTotal(p.id),
+            sH: studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0),
+            wH: workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0),
+            empCount: employees.filter(e=>empTotal(p.id,e.id)>0).length,
+            stuCount: studentEmps.filter(e=>empTotal(p.id,e.id)>0).length,
+          }))
+          .filter(r=>r.h>0)
+          .sort((a,b)=>b.h-a.h);
+
+        const stuPct = totalAllH>0 ? Math.round((studentH/totalAllH)*100) : 0;
+        const worPct = 100 - stuPct;
+
+        return (
+        <div style={{ padding:"24px 28px", maxWidth:1050 }}>
+          {/* header */}
+          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20, flexWrap:"wrap" }}>
+            <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Raport</div>
+            <button className="btn-ghost" onClick={prevMonth} style={{ padding:"5px 10px", fontSize:14 }}>‹</button>
+            <span style={{ color:C.blue, fontWeight:600, fontSize:15 }}>{MONTHS[month]} {year}</span>
+            <button className="btn-ghost" onClick={nextMonth} style={{ padding:"5px 10px", fontSize:14 }}>›</button>
           </div>
-          <div style={{ display:"flex", gap:8, marginBottom:20, alignItems:"center" }}>
-            <button className="btn-ghost" onClick={prevMonth} style={{ padding:"6px 12px" }}>‹</button>
-            <span style={{ color:C.blue, fontWeight:600, fontSize:14 }}>{MONTHS[month]} {year}</span>
-            <button className="btn-ghost" onClick={nextMonth} style={{ padding:"6px 12px" }}>›</button>
-          </div>
-          {myProjects.map(p=>{
-            const total=projTotal(p.id);
-            const rows=employees.map(e=>({emp:e,h:empTotal(p.id,e.id)})).filter(r=>r.h>0);
-            return (
-              <div key={p.id} className="card" style={{ marginBottom:14 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:total>0?16:0 }}>
-                  <div>
-                    <div style={{ fontWeight:600, fontSize:16, color:C.gray7 }}>{p.name}</div>
-                    {p.number&&<div style={{ fontSize:11, color:C.gray4 }}>nr {p.number}</div>}
-                  </div>
-                  <div style={{ color:C.blue, fontWeight:700, fontSize:20 }}>{total>0?`${total}h`:"—"}</div>
-                </div>
-                {total===0
-                  ? <div style={{ color:C.gray4, fontSize:12, marginTop:6 }}>Brak wpisów w tym miesiącu.</div>
-                  : rows.map(({emp,h})=>(
-                    <div key={emp.id} style={{ marginBottom:10 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:5 }}>
-                        <span style={{ display:"flex", alignItems:"center", gap:8 }}>
-                          <div style={{ width:24, height:24, borderRadius:"50%", background:C.blueLight,
-                                        color:C.blue, display:"flex", alignItems:"center", justifyContent:"center",
-                                        fontSize:10, fontWeight:600 }}>{emp.first_name[0]}{emp.last_name[0]}</div>
-                          {emp.first_name} {emp.last_name}
-                          {emp.is_student&&<span className="tag-s">student</span>}
-                        </span>
-                        <span style={{ color:C.blue, fontWeight:600 }}>{h}h</span>
-                      </div>
-                      <div style={{ height:4, background:C.gray2, borderRadius:2 }}>
-                        <div style={{ height:"100%", width:`${(h/total)*100}%`,
-                                      background:C.blue, borderRadius:2, transition:"width .4s" }} />
-                      </div>
-                    </div>
-                  ))
-                }
+
+          {/* KPI cards */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:20 }}>
+            {[
+              { label:"Łączne godziny",     value:`${totalAllH}h`,        sub:`${myProjects.filter(p=>projTotal(p.id)>0).length} aktywnych projektów` },
+              { label:"Aktywni pracownicy", value:activeEmps.length,       sub:`${activeStudents} studentów / ${activeWorkers} pracowników` },
+              { label:"Godziny studentów",  value:`${studentH}h`,          sub:`${stuPct}% całości` },
+              { label:"Godziny pracowników",value:`${workerH}h`,           sub:`${worPct}% całości` },
+            ].map(({label,value,sub})=>(
+              <div key={label} style={{ background:C.white, border:`1px solid ${C.gray3}`,
+                borderRadius:10, padding:"16px 18px", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
+                <div style={{ fontSize:11, color:C.gray4, fontWeight:500, marginBottom:6, textTransform:"uppercase", letterSpacing:".04em" }}>{label}</div>
+                <div style={{ fontSize:26, fontWeight:700, color:C.blue, lineHeight:1 }}>{value}</div>
+                <div style={{ fontSize:11, color:C.gray4, marginTop:6 }}>{sub}</div>
               </div>
-            );
-          })}
+            ))}
+          </div>
+
+          {/* student vs pracownik bar */}
+          <div style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10,
+                        padding:"16px 20px", marginBottom:16, boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
+            <div style={{ fontSize:12, fontWeight:600, color:C.gray6, marginBottom:10 }}>
+              Podział godzin: Studenci vs Pracownicy
+            </div>
+            <div style={{ display:"flex", height:28, borderRadius:6, overflow:"hidden", gap:2 }}>
+              <div style={{ width:`${stuPct}%`, background:"#3DAA70", display:"flex", alignItems:"center",
+                            justifyContent:"center", color:"#fff", fontSize:11, fontWeight:600, minWidth:stuPct>5?0:0,
+                            transition:"width .4s" }}>
+                {stuPct>8?`${stuPct}% STU`:""}
+              </div>
+              <div style={{ flex:1, background:C.blue, display:"flex", alignItems:"center",
+                            justifyContent:"center", color:"#fff", fontSize:11, fontWeight:600 }}>
+                {worPct>8?`${worPct}% PR`:""}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:20, marginTop:8, fontSize:11 }}>
+              <span style={{ color:"#3DAA70", fontWeight:500 }}>● Studenci: {studentH}h ({stuPct}%)</span>
+              <span style={{ color:C.blue, fontWeight:500 }}>● Pracownicy: {workerH}h ({worPct}%)</span>
+            </div>
+          </div>
+
+          {/* daily chart */}
+          <div style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10,
+                        padding:"16px 20px", marginBottom:16, boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
+            <div style={{ fontSize:12, fontWeight:600, color:C.gray6, marginBottom:12 }}>
+              Godziny dzienne — {MONTHS[month]} {year}
+            </div>
+            <div style={{ display:"flex", alignItems:"flex-end", gap:3, height:80 }}>
+              {dailyH.map(({d,h})=>{
+                const dow = new Date(year,month,d).getDay();
+                const wknd = dow===0||dow===6;
+                const pct = maxDay>0 ? (h/maxDay)*100 : 0;
+                return (
+                  <div key={d} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
+                    <div style={{ width:"100%", borderRadius:"2px 2px 0 0",
+                                  height:`${pct}%`, minHeight: h>0?4:0,
+                                  background: wknd ? C.gray3 : C.blue,
+                                  transition:"height .3s" }} title={`${d}.${month+1}: ${h}h`}/>
+                    <div style={{ fontSize:8, color: wknd?C.gray3:C.gray4 }}>{d}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* project table */}
+          <div style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10,
+                        overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
+            <div style={{ padding:"14px 18px", borderBottom:`1px solid ${C.gray2}`,
+                          fontSize:12, fontWeight:600, color:C.gray6 }}>
+              Zestawienie projektów
+            </div>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead>
+                <tr style={{ background:C.gray2 }}>
+                  {["Projekt","Nr","Prac.","Stu.","Godz. STU","Godz. PR","Łącznie","% STU"].map(h=>(
+                    <th key={h} style={{ padding:"8px 12px", textAlign: h==="Projekt"?"left":"center",
+                                         fontSize:10, fontWeight:600, color:C.gray5,
+                                         borderBottom:`1px solid ${C.gray3}` }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {projRows.map(({p,h,sH,wH,empCount,stuCount},ri)=>{
+                  const pct = h>0?Math.round((sH/h)*100):0;
+                  const rowBg = ri%2===0?C.white:"#F8FAFC";
+                  return (
+                    <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
+                      <td style={{ padding:"9px 12px", fontWeight:500, color:C.gray7 }}>{p.name}</td>
+                      <td style={{ padding:"9px 12px", textAlign:"center", color:C.gray4, fontSize:11 }}>{p.number||"—"}</td>
+                      <td style={{ padding:"9px 12px", textAlign:"center", color:C.gray6 }}>{empCount}</td>
+                      <td style={{ padding:"9px 12px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{stuCount}</td>
+                      <td style={{ padding:"9px 12px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{sH>0?`${sH}h`:"—"}</td>
+                      <td style={{ padding:"9px 12px", textAlign:"center", color:C.blue, fontWeight:500 }}>{wH>0?`${wH}h`:"—"}</td>
+                      <td style={{ padding:"9px 12px", textAlign:"center", fontWeight:700, color:C.blue }}>{h}h</td>
+                      <td style={{ padding:"9px 12px", textAlign:"center" }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                          <div style={{ flex:1, height:6, background:C.gray2, borderRadius:3 }}>
+                            <div style={{ height:"100%", width:`${pct}%`, background:"#3DAA70",
+                                          borderRadius:3, transition:"width .3s" }}/>
+                          </div>
+                          <span style={{ fontSize:10, color:C.gray5, minWidth:28 }}>{pct}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {projRows.length===0&&(
+                  <tr><td colSpan={8} style={{ padding:24, textAlign:"center", color:C.gray4 }}>
+                    Brak danych w tym miesiącu.
+                  </td></tr>
+                )}
+                {/* SUMA row */}
+                {projRows.length>0&&(
+                  <tr style={{ background:C.gray2, borderTop:`2px solid ${C.gray3}` }}>
+                    <td colSpan={2} style={{ padding:"9px 12px", fontWeight:700, color:C.gray7 }}>RAZEM</td>
+                    <td style={{ padding:"9px 12px", textAlign:"center", fontWeight:700, color:C.gray6 }}>
+                      {activeEmps.length}
+                    </td>
+                    <td style={{ padding:"9px 12px", textAlign:"center", fontWeight:700, color:"#3DAA70" }}>
+                      {activeStudents}
+                    </td>
+                    <td style={{ padding:"9px 12px", textAlign:"center", fontWeight:700, color:"#3DAA70" }}>{studentH}h</td>
+                    <td style={{ padding:"9px 12px", textAlign:"center", fontWeight:700, color:C.blue }}>{workerH}h</td>
+                    <td style={{ padding:"9px 12px", textAlign:"center", fontWeight:700, color:C.blue }}>{totalAllH}h</td>
+                    <td style={{ padding:"9px 12px", textAlign:"center", fontWeight:700, color:C.gray5 }}>{stuPct}%</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ═══ MODALS ═══ */}
       {modal==="addEmp"&&(
