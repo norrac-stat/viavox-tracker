@@ -134,7 +134,13 @@ export default function App() {
   const [editingMgr,setEditingMgr]= useState(null);
   const [importRows,  setImportRows]  = useState([]); // parsed preview rows
   const [importing,   setImporting]   = useState(false);
-  const importFileRef = useRef(null);
+  const importFileRef   = useRef(null);
+  const importHoursRef  = useRef(null);
+  const importEmpsRef   = useRef(null);
+  const [importHoursRows, setImportHoursRows] = useState([]);
+  const [importEmpsRows,  setImportEmpsRows]  = useState([]);
+  const [importingHours,  setImportingHours]  = useState(false);
+  const [importingEmps,   setImportingEmps]   = useState(false);
 
   const { toast, show: showToast } = useToast();
 
@@ -445,6 +451,183 @@ export default function App() {
     showToast(`Zaimportowano: ${projAdded} projektów, ${mgrAdded} nowych kierowników`);
   }
 
+  // ── Import godzin z Excel (timesheet) ────────────────────────────────────
+  function handleImportHoursFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        // dynamically import xlsx library
+        const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+        const wb   = XLSX.read(ev.target.result, { type:"array" });
+        const ws   = wb.Sheets[wb.SheetNames[0]];
+        const raw  = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
+
+        // row 0 = title, row 1 = headers (days), row 2 = dow, row 3+ = data
+        const headerRow = raw[1] || [];
+        // find day columns: cols where header is a number 1-31
+        const dayCols = [];
+        for (let ci = 0; ci < headerRow.length; ci++) {
+          const v = headerRow[ci];
+          if (typeof v === "number" && v >= 1 && v <= 31) dayCols.push({ ci, day: v });
+        }
+
+        const rows = [];
+        for (let ri = 3; ri < raw.length; ri++) {
+          const row = raw[ri];
+          const last    = String(row[0]||"").trim();
+          const first   = String(row[1]||"").trim();
+          const uk      = String(row[2]||"").trim();
+          const student = String(row[3]||"").trim().toUpperCase() === "TAK";
+          const projRaw = String(row[4]||"").trim();
+          if (!last && !first) continue;
+
+          // parse project name/number
+          let projName = projRaw, projNum = "";
+          if (projRaw.includes(" / ")) {
+            const parts = projRaw.split(" / ");
+            projName = parts[0].trim();
+            projNum  = parts[1].trim();
+          }
+
+          const hours = {};
+          for (const { ci, day } of dayCols) {
+            const v = row[ci];
+            const h = parseFloat(v);
+            if (!isNaN(h) && h > 0) hours[day] = h;
+          }
+          if (Object.keys(hours).length > 0) {
+            rows.push({ last, first, uk, student, projName, projNum, hours });
+          }
+        }
+        setImportHoursRows(rows);
+      } catch(err) {
+        showToast("Błąd odczytu pliku: " + err.message, "err");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  async function runImportHours() {
+    if (!importHoursRows.length) return;
+    setImportingHours(true);
+    let addedEmps = 0, addedProjs = 0, addedHours = 0;
+
+    // detect month/year from activeProj context — use current year/month
+    for (const row of importHoursRows) {
+      // 1. upsert employee
+      let emp = employees.find(e =>
+        e.first_name.toLowerCase() === row.first.toLowerCase() &&
+        e.last_name.toLowerCase()  === row.last.toLowerCase()
+      );
+      if (!emp) {
+        const { data } = await supabase.from("employees").insert({
+          first_name: toTitleCase(row.first),
+          last_name:  toTitleCase(row.last),
+          is_student: row.student,
+          uk_number:  row.uk,
+        }).select().single();
+        if (data) { emp = data; setEmployees(prev => [...prev, data]); addedEmps++; }
+      }
+      if (!emp) continue;
+
+      // 2. upsert project
+      let proj = projects.find(p =>
+        p.name.toLowerCase() === row.projName.toLowerCase() &&
+        p.number === row.projNum
+      );
+      if (!proj && row.projName) {
+        const { data } = await supabase.from("projects").insert({
+          name: row.projName, number: row.projNum,
+        }).select().single();
+        if (data) { proj = data; setProjects(prev => [...prev, data]); addedProjs++; }
+      }
+      if (!proj) continue;
+
+      // 3. insert hours
+      for (const [day, h] of Object.entries(row.hours)) {
+        const dateStr = `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+        await supabase.from("hours").upsert({
+          employee_id: emp.id, project_id: proj.id,
+          work_date: dateStr, hours: h,
+        }, { onConflict: "employee_id,project_id,work_date" });
+        const key = `${proj.id}|${emp.id}|${dateStr}`;
+        setHoursMap(prev => ({ ...prev, [key]: String(h) }));
+        addedHours++;
+      }
+    }
+
+    setImportingHours(false);
+    setModal(null);
+    setImportHoursRows([]);
+    if (importHoursRef.current) importHoursRef.current.value = "";
+    showToast(`Import: ${addedEmps} nowych pracowników, ${addedProjs} projektów, ${addedHours} godzin`);
+  }
+
+  // ── Import pracowników (bez godzin) ───────────────────────────────────────
+  function handleImportEmpsFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+        const wb   = XLSX.read(ev.target.result, { type:"array" });
+        const ws   = wb.Sheets[wb.SheetNames[0]];
+        const raw  = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
+
+        const rows = [];
+        const seen = new Set();
+        for (let ri = 1; ri < raw.length; ri++) {
+          const row = raw[ri];
+          const last    = String(row[0]||"").trim();
+          const first   = String(row[1]||"").trim();
+          const uk      = String(row[2]||"").trim();
+          const student = String(row[3]||"").trim().toUpperCase() === "TAK";
+          if (!last || !first) continue;
+          const key = `${first}|${last}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push({ last, first, uk, student });
+        }
+        setImportEmpsRows(rows);
+      } catch(err) {
+        showToast("Błąd odczytu pliku: " + err.message, "err");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  async function runImportEmps() {
+    if (!importEmpsRows.length) return;
+    setImportingEmps(true);
+    let added = 0;
+    for (const row of importEmpsRows) {
+      const exists = employees.find(e =>
+        e.first_name.toLowerCase() === row.first.toLowerCase() &&
+        e.last_name.toLowerCase()  === row.last.toLowerCase()
+      );
+      if (exists) continue;
+      const { data } = await supabase.from("employees").insert({
+        first_name: toTitleCase(row.first),
+        last_name:  toTitleCase(row.last),
+        is_student: row.student,
+        uk_number:  row.uk,
+      }).select().single();
+      if (data) { setEmployees(prev => [...prev, data]); added++; }
+    }
+    setImportingEmps(false);
+    setModal(null);
+    setImportEmpsRows([]);
+    if (importEmpsRef.current) importEmpsRef.current.value = "";
+    showToast(`Dodano ${added} nowych pracowników`);
+  }
+
+  function toTitleCase(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+  }
+
   function prevMonth() { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); }
   function nextMonth() { if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); }
 
@@ -577,9 +760,12 @@ export default function App() {
                   </div>
                 </>)
             }
-            {isAdmin && (
-              <button className="btn btn-sm" style={{ flexShrink:0 }} onClick={()=>setModal("addEmp")}>+ Pracownik</button>
-            )}
+            <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+              <button className="btn-ghost btn-sm" onClick={()=>setModal("importHours")}>⬆ Importuj godziny</button>
+              {isAdmin && (
+                <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Pracownik</button>
+              )}
+            </div>
           </div>
 
           {/* grid */}
@@ -730,7 +916,10 @@ export default function App() {
               <input className="inp" placeholder="imię lub nazwisko…" value={searchQ}
                 onChange={e=>setSearchQ(e.target.value)} style={{ width:190, padding:"6px 10px", fontSize:12 }} />
             </div>
-            {isAdmin&&<button className="btn btn-sm" style={{marginLeft:"auto"}} onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>}
+            <div style={{ display:"flex", gap:6 }}>
+              <button className="btn-ghost btn-sm" onClick={()=>setModal("importEmps")}>⬆ Importuj pracowników</button>
+              {isAdmin&&<button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>}
+            </div>
           </div>
 
           {/* table */}
@@ -1114,6 +1303,125 @@ export default function App() {
                           :`Importuj ${importRows.length} projektów`}
               </button>
               <button className="btn-ghost" onClick={()=>{setModal(null);setImportRows([]);}}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ MODAL: Import godzin (timesheet) ═══ */}
+      {modal==="importHours"&&(
+        <div className="modal-bg" onClick={()=>{setModal(null);setImportHoursRows([]);}}>
+          <div className="modal modal-wide" onClick={e=>e.stopPropagation()} style={{ maxHeight:"82vh", overflowY:"auto" }}>
+            <div style={{ fontWeight:700, fontSize:18, color:C.gray7 }}>Import godzin z Excel</div>
+            <div style={{ background:C.blueLight, border:`1px solid ${C.blueMid}`, borderRadius:8, padding:14, fontSize:12, color:C.blueDark, lineHeight:1.6 }}>
+              <strong>Format pliku:</strong> użyj wzoru VIAVOX_Godziny_[Miesiąc]_[Rok].xlsx<br/>
+              Kolumny: Nazwisko, Imię, Nr UK, Student (TAK/NIE), Projekt (Nazwa / Numer), dni 1–31<br/>
+              Godziny zostaną wpisane dla miesiąca: <strong>{MONTHS[month]} {year}</strong>
+            </div>
+            <div>
+              <label className="lbl">Wybierz plik Excel (.xlsx)</label>
+              <input ref={importHoursRef} type="file" accept=".xlsx,.xls" className="inp"
+                style={{ padding:"7px 10px", cursor:"pointer" }}
+                onChange={handleImportHoursFile} />
+            </div>
+            {importHoursRows.length>0&&(
+              <div>
+                <div style={{ fontSize:12, color:C.gray5, marginBottom:8, fontWeight:500 }}>
+                  Podgląd — {importHoursRows.length} wierszy ({importHoursRows.reduce((s,r)=>s+Object.keys(r.hours).length,0)} wpisów godzin):
+                </div>
+                <div style={{ maxHeight:240, overflowY:"auto", border:`1px solid ${C.gray3}`, borderRadius:8 }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                    <thead>
+                      <tr style={{ background:C.gray2 }}>
+                        {["Pracownik","Student","Projekt","Dni z godz.","Suma"].map(h=>(
+                          <th key={h} style={{ padding:"7px 10px", textAlign:"left", fontWeight:600,
+                                               color:C.gray5, borderBottom:`1px solid ${C.gray3}` }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importHoursRows.map((r,i)=>(
+                        <tr key={i} style={{ background:i%2===0?C.white:"#F8FAFC", borderBottom:`1px solid ${C.gray2}` }}>
+                          <td style={{ padding:"6px 10px", fontWeight:500, color:C.gray7 }}>{r.first} {r.last}</td>
+                          <td style={{ padding:"6px 10px" }}>{r.student?<span className="tag-s">STU</span>:<span className="tag-p">PR</span>}</td>
+                          <td style={{ padding:"6px 10px", color:C.gray5, fontSize:11 }}>{r.projName}{r.projNum?` / ${r.projNum}`:""}</td>
+                          <td style={{ padding:"6px 10px", textAlign:"center", color:C.gray6 }}>{Object.keys(r.hours).length}</td>
+                          <td style={{ padding:"6px 10px", textAlign:"center", color:C.blue, fontWeight:600 }}>
+                            {Object.values(r.hours).reduce((s,v)=>s+v,0)}h
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+              <button className="btn" onClick={runImportHours}
+                disabled={importHoursRows.length===0||importingHours}>
+                {importingHours
+                  ? <><span className="spinner" style={{width:14,height:14,marginRight:6}}/>Importuję…</>
+                  : `Importuj ${importHoursRows.length} wierszy`}
+              </button>
+              <button className="btn-ghost" onClick={()=>{setModal(null);setImportHoursRows([]);}}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ MODAL: Import pracowników ═══ */}
+      {modal==="importEmps"&&(
+        <div className="modal-bg" onClick={()=>{setModal(null);setImportEmpsRows([]);}}>
+          <div className="modal modal-wide" onClick={e=>e.stopPropagation()} style={{ maxHeight:"82vh", overflowY:"auto" }}>
+            <div style={{ fontWeight:700, fontSize:18, color:C.gray7 }}>Import pracowników z Excel</div>
+            <div style={{ background:C.blueLight, border:`1px solid ${C.blueMid}`, borderRadius:8, padding:14, fontSize:12, color:C.blueDark, lineHeight:1.6 }}>
+              <strong>Format pliku:</strong> kolumny A–D: Nazwisko, Imię, Nr UK, Student (TAK/NIE)<br/>
+              Pierwszy wiersz = nagłówek (zostanie pominięty).<br/>
+              Duplikaty (to samo imię i nazwisko) zostaną pominięte.
+            </div>
+            <div>
+              <label className="lbl">Wybierz plik Excel (.xlsx)</label>
+              <input ref={importEmpsRef} type="file" accept=".xlsx,.xls" className="inp"
+                style={{ padding:"7px 10px", cursor:"pointer" }}
+                onChange={handleImportEmpsFile} />
+            </div>
+            {importEmpsRows.length>0&&(
+              <div>
+                <div style={{ fontSize:12, color:C.gray5, marginBottom:8, fontWeight:500 }}>
+                  Podgląd — {importEmpsRows.length} pracowników do dodania:
+                </div>
+                <div style={{ maxHeight:260, overflowY:"auto", border:`1px solid ${C.gray3}`, borderRadius:8 }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                    <thead>
+                      <tr style={{ background:C.gray2 }}>
+                        {["Nazwisko","Imię","Nr UK","Typ"].map(h=>(
+                          <th key={h} style={{ padding:"7px 10px", textAlign:"left", fontWeight:600,
+                                               color:C.gray5, borderBottom:`1px solid ${C.gray3}` }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importEmpsRows.map((r,i)=>(
+                        <tr key={i} style={{ background:i%2===0?C.white:"#F8FAFC", borderBottom:`1px solid ${C.gray2}` }}>
+                          <td style={{ padding:"6px 10px", fontWeight:500, color:C.gray7 }}>{r.last}</td>
+                          <td style={{ padding:"6px 10px", color:C.gray6 }}>{r.first}</td>
+                          <td style={{ padding:"6px 10px", color:C.gray4 }}>{r.uk||"—"}</td>
+                          <td style={{ padding:"6px 10px" }}>{r.student?<span className="tag-s">STUDENT</span>:<span className="tag-p">PRACOWNIK</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+              <button className="btn" onClick={runImportEmps}
+                disabled={importEmpsRows.length===0||importingEmps}>
+                {importingEmps
+                  ? <><span className="spinner" style={{width:14,height:14,marginRight:6}}/>Importuję…</>
+                  : `Dodaj ${importEmpsRows.length} pracowników`}
+              </button>
+              <button className="btn-ghost" onClick={()=>{setModal(null);setImportEmpsRows([]);}}>Anuluj</button>
             </div>
           </div>
         </div>
