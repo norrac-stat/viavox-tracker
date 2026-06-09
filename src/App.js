@@ -192,9 +192,9 @@ export default function App() {
     [projects, myProjectIds]
   );
 
-  // employees filtered by active project (for timesheet)
+  // ── TIMESHEET: pracownicy filtrowane po aktywnym projekcie ─────────────────
   const empsOnProject = useMemo(() => {
-    if (!activeProj) return employees; // brak projektu = wszyscy
+    if (!activeProj) return employees;
     const empIdsWithHours = new Set(
       Object.keys(hoursMap)
         .filter(k => k.startsWith(activeProj + "|"))
@@ -204,15 +204,35 @@ export default function App() {
     return employees.filter(e => empIdsWithHours.has(e.id));
   }, [employees, activeProj, hoursMap]);
 
+  // filteredEmps — używane w timesheecie (searchQ + projekt)
   const filteredEmps = useMemo(() => {
     const q = searchQ.toLowerCase().trim();
-    // jeśli jest wyszukiwanie — szukaj wśród WSZYSTKICH pracowników
-    // jeśli brak wyszukiwania — filtruj po projekcie
     const base = q ? employees : empsOnProject;
     return base.filter(e =>
       `${e.first_name} ${e.last_name}`.toLowerCase().includes(q)
     );
   }, [empsOnProject, employees, searchQ]);
+
+  // ── PRACOWNICY: osobny filtr i wyszukiwanie ───────────────────────────────
+  const [empSearch, setEmpSearch] = useState("");
+
+  const filteredEmpsTab = useMemo(() => {
+    const q = empSearch.toLowerCase().trim();
+    let base = employees;
+    if (empProjFilter !== "all") {
+      const empIdsWithHours = new Set(
+        Object.keys(hoursMap)
+          .filter(k => k.startsWith(empProjFilter + "|"))
+          .map(k => k.split("|")[1])
+      );
+      base = empIdsWithHours.size > 0
+        ? employees.filter(e => empIdsWithHours.has(e.id))
+        : employees;
+    }
+    return q ? employees.filter(e =>
+      `${e.first_name} ${e.last_name}`.toLowerCase().includes(q)
+    ) : base;
+  }, [employees, empProjFilter, hoursMap, empSearch]);
 
   const days = daysInMonth(year, month);
   const isAdmin = currentManager?.is_admin;
@@ -916,8 +936,8 @@ export default function App() {
             </div>
             <div style={{ display:"flex", alignItems:"center", gap:6 }}>
               <span style={{ fontSize:11, color:C.gray5, fontWeight:500 }}>Szukaj</span>
-              <input className="inp" placeholder="imię lub nazwisko…" value={searchQ}
-                onChange={e=>setSearchQ(e.target.value)} style={{ width:190, padding:"6px 10px", fontSize:12 }} />
+              <input className="inp" placeholder="imię lub nazwisko…" value={empSearch}
+                onChange={e=>setEmpSearch(e.target.value)} style={{ width:190, padding:"6px 10px", fontSize:12 }} />
             </div>
             <div style={{ display:"flex", gap:6 }}>
               <button className="btn-ghost btn-sm" onClick={()=>setModal("importEmps")}>⬆ Importuj pracowników</button>
@@ -944,7 +964,7 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              {filteredEmps.map((emp,ri)=>{
+              {filteredEmpsTab.map((emp,ri)=>{
                 const rowBg = ri%2===0 ? C.white : "#F8FAFC";
                 const monthTotals = monthCols.map(({key})=>getMonthHours(emp.id, activeFilter, key));
                 const grandTotal  = monthTotals.reduce((s,v)=>s+v,0);
