@@ -118,6 +118,7 @@ export default function App() {
   const [month, setMonth] = useState(now.getMonth());
   const [activeProj, setActiveProj] = useState(null);
   const [searchQ,    setSearchQ]    = useState("");
+  const [empProjFilter, setEmpProjFilter] = useState("all"); // "all" or project id
   const [tab,        setTab]        = useState("timesheet");
   const [modal,      setModal]      = useState(null);
 
@@ -673,46 +674,139 @@ export default function App() {
       )}
 
       {/* ═══ EMPLOYEES ═══ */}
-      {tab==="employees" && (
-        <div style={{ padding:"24px 28px", maxWidth:860 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20 }}>
+      {tab==="employees" && (()=>{
+        // build last 6 months list
+        const monthCols = [];
+        for (let i=5; i>=0; i--) {
+          let y=year, m=month-i;
+          while(m<0){m+=12;y--;}
+          monthCols.push({y, m, key:`${y}-${String(m+1).padStart(2,"0")}`});
+        }
+        const PL_MONTHS_SHORT = ["Sty","Lut","Mar","Kwi","Maj","Cze","Lip","Sie","Wrz","Paź","Lis","Gru"];
+
+        // hours for a specific month key
+        function getMonthHours(empId, projId, mk) {
+          let s=0;
+          for(const [k,v] of Object.entries(hoursMap)) {
+            const [kProj, kEmp, kDate] = k.split("|");
+            if(kEmp===empId && kDate && kDate.startsWith(mk) && (projId==="all"||kProj===projId)) {
+              s += parseFloat(v)||0;
+            }
+          }
+          return s;
+        }
+
+        // filter projects for selector
+        const projOptions = myProjects.sort((a,b)=>(a.number||"").localeCompare(b.number||"","pl",{numeric:true}));
+        const activeFilter = empProjFilter;
+
+        return (
+        <div style={{ padding:"24px 28px", overflowX:"auto" }}>
+          {/* toolbar */}
+          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16, flexWrap:"wrap" }}>
             <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Pracownicy</div>
-            <div style={{ marginLeft:"auto", display:"flex", gap:10 }}>
-              <input className="inp" placeholder="Szukaj…" value={searchQ}
-                onChange={e=>setSearchQ(e.target.value)} style={{ width:200, fontSize:12 }} />
-              {isAdmin&&<button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>}
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{ fontSize:11, color:C.gray5, fontWeight:500 }}>Projekt</span>
+              <select className="inp" value={activeFilter} onChange={e=>setEmpProjFilter(e.target.value)}
+                style={{ width:240, padding:"6px 10px", fontSize:12 }}>
+                <option value="all">Wszystkie projekty</option>
+                {projOptions.map(p=>(
+                  <option key={p.id} value={p.id}>{p.number?`[${p.number}] ${p.name}`:p.name}</option>
+                ))}
+              </select>
             </div>
-          </div>
-          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 110px 160px 80px",
-                           gap:12, padding:"8px 16px", color:C.gray4, fontSize:11, fontWeight:500 }}>
-              <span>PRACOWNIK</span><span>TYP</span><span>NR UK</span><span style={{textAlign:"right"}}>GODZ.</span>
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{ fontSize:11, color:C.gray5, fontWeight:500 }}>Szukaj</span>
+              <input className="inp" placeholder="imię lub nazwisko…" value={searchQ}
+                onChange={e=>setSearchQ(e.target.value)} style={{ width:190, padding:"6px 10px", fontSize:12 }} />
             </div>
-            {filteredEmps.map(emp=>(
-              <div key={emp.id} style={{ display:"grid", gridTemplateColumns:"1fr 110px 160px 80px",
-                                         gap:12, padding:"12px 16px", background:C.white,
-                                         border:`1px solid ${C.gray3}`, borderRadius:8, alignItems:"center" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                  <div style={{ width:32, height:32, borderRadius:"50%", background:C.blueLight,
-                                color:C.blue, display:"flex", alignItems:"center", justifyContent:"center",
-                                fontSize:12, fontWeight:600 }}>
-                    {emp.first_name[0]}{emp.last_name[0]}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight:500, color:C.gray7 }}>{emp.first_name} {emp.last_name}</div>
-                    <div style={{ fontSize:10, color:C.gray4 }}>{emp.uk_number||"brak UK"}</div>
-                  </div>
-                </div>
-                <span>{emp.is_student?<span className="tag-s">STUDENT</span>:<span className="tag-p">PRACOWNIK</span>}</span>
-                <span style={{ color:emp.uk_number?C.gray6:C.gray3, fontSize:12 }}>{emp.uk_number||"—"}</span>
-                <span style={{ color:C.blue, textAlign:"right", fontSize:12, fontWeight:600 }}>
-                  {(()=>{ const h=myProjects.reduce((s,p)=>s+empTotal(p.id,emp.id),0); return h>0?`${h}h`:"—"; })()}
-                </span>
-              </div>
-            ))}
+            {isAdmin&&<button className="btn btn-sm" style={{marginLeft:"auto"}} onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>}
           </div>
+
+          {/* table */}
+          <table style={{ borderCollapse:"collapse", fontSize:12, minWidth:"100%" }}>
+            <thead>
+              <tr style={{ background:C.gray2, borderBottom:`2px solid ${C.gray3}` }}>
+                <th style={{ ...EmpTH, textAlign:"left", width:200, position:"sticky", left:0, background:C.gray2, zIndex:2 }}>PRACOWNIK</th>
+                <th style={{ ...EmpTH, width:60 }}>TYP</th>
+                <th style={{ ...EmpTH, width:110 }}>NR UK</th>
+                {monthCols.map(({y,m,key})=>(
+                  <th key={key} style={{ ...EmpTH, width:72,
+                    background: (y===year&&m===month) ? C.blueMid : C.gray2,
+                    color:      (y===year&&m===month) ? C.blueDark : C.gray5 }}>
+                    <div style={{ fontSize:11, fontWeight:600 }}>{PL_MONTHS_SHORT[m]}</div>
+                    <div style={{ fontSize:9, marginTop:1, fontWeight:400 }}>{y}</div>
+                  </th>
+                ))}
+                <th style={{ ...EmpTH, width:80, background:C.blueDark, color:"#fff" }}>SUMA</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredEmps.map((emp,ri)=>{
+                const rowBg = ri%2===0 ? C.white : "#F8FAFC";
+                const monthTotals = monthCols.map(({key})=>getMonthHours(emp.id, activeFilter, key));
+                const grandTotal  = monthTotals.reduce((s,v)=>s+v,0);
+                const maxH = Math.max(...monthTotals, 1);
+                return (
+                  <tr key={emp.id} className="emp-row"
+                    style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
+                    {/* name */}
+                    <td style={{ padding:"7px 12px", position:"sticky", left:0, zIndex:1,
+                                 background:rowBg, borderRight:`1px solid ${C.gray2}`, whiteSpace:"nowrap" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <div style={{ width:26, height:26, borderRadius:"50%", background:C.blueLight,
+                                      color:C.blue, display:"flex", alignItems:"center", justifyContent:"center",
+                                      fontSize:10, fontWeight:600, flexShrink:0 }}>
+                          {emp.first_name[0]}{emp.last_name[0]}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight:500, color:C.gray7 }}>{emp.first_name} {emp.last_name}</div>
+                          {emp.uk_number&&<div style={{ fontSize:10, color:C.gray4 }}>{emp.uk_number}</div>}
+                        </div>
+                      </div>
+                    </td>
+                    {/* type */}
+                    <td style={{ padding:"7px 10px", textAlign:"center" }}>
+                      {emp.is_student?<span className="tag-s">STU</span>:<span className="tag-p">PR</span>}
+                    </td>
+                    {/* uk */}
+                    <td style={{ padding:"7px 10px", color:emp.uk_number?C.gray6:C.gray3, textAlign:"center", fontSize:11 }}>
+                      {emp.uk_number||"—"}
+                    </td>
+                    {/* month columns */}
+                    {monthTotals.map((h, ci)=>{
+                      const mk = monthCols[ci].key;
+                      const isCurrent = monthCols[ci].y===year && monthCols[ci].m===month;
+                      const pct = maxH>0 ? Math.round((h/maxH)*100) : 0;
+                      return (
+                        <td key={mk} style={{ padding:"5px 8px", textAlign:"center",
+                                              background: isCurrent ? "#F0F7FF" : "transparent" }}>
+                          {h>0 ? (
+                            <div>
+                              <div style={{ fontWeight:600, color:isCurrent?C.blue:C.gray6, fontSize:12 }}>{h}h</div>
+                              <div style={{ height:3, background:C.gray2, borderRadius:2, marginTop:3 }}>
+                                <div style={{ height:"100%", width:`${pct}%`, background:isCurrent?C.blue:C.gray4, borderRadius:2 }}/>
+                              </div>
+                            </div>
+                          ) : <span style={{ color:C.gray3 }}>—</span>}
+                        </td>
+                      );
+                    })}
+                    {/* grand total */}
+                    <td style={{ padding:"7px 10px", textAlign:"center",
+                                 fontWeight:700, color:grandTotal>0?C.blue:C.gray3,
+                                 background: grandTotal>0 ? C.blueLight : "transparent",
+                                 fontSize:12, borderLeft:`1px solid ${C.blueMid}` }}>
+                      {grandTotal>0?`${grandTotal}h`:"—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-      )}
+        );
+      })()}
 
       {/* ═══ PROJECTS ═══ */}
       {tab==="projects"&&isAdmin&&(
@@ -1023,4 +1117,9 @@ export default function App() {
 const TH = {
   padding:"7px 4px", textAlign:"center", fontSize:10, fontWeight:600,
   letterSpacing:".05em", borderRight:`1px solid #D8DCE2`,
+};
+
+const EmpTH = {
+  padding:"9px 10px", textAlign:"center", fontSize:10, fontWeight:600,
+  color:"#6B7280", letterSpacing:".04em", borderRight:`1px solid #D8DCE2`,
 };
