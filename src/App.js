@@ -74,6 +74,25 @@ select.inp option{background:${C.white};color:${C.gray7}}
 .toast.ok{background:#2A7D52}
 .toast.err{background:${C.red}}
 @keyframes slideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* ── MOBILE ── */
+@media(max-width:768px){
+  .desktop-only{display:none!important}
+  .mobile-nav{display:flex!important}
+  .top-bar-tabs{display:none!important}
+  .page-pad{padding:12px 14px!important}
+  .modal{width:95vw!important;padding:18px!important}
+  .modal-wide{width:95vw!important}
+  .checkbox-grid{grid-template-columns:1fr!important}
+  .kpi-grid{grid-template-columns:1fr 1fr!important}
+  .ts-mobile-row{display:flex!important}
+  .emp-col-uk{display:none!important}
+  .report-table-scroll{overflow-x:auto}
+}
+@media(min-width:769px){
+  .mobile-nav{display:none!important}
+  .mobile-only{display:none!important}
+}
 `;
 
 function Logo({ size = 24 }) {
@@ -143,6 +162,13 @@ export default function App() {
   const [importingEmps,   setImportingEmps]   = useState(false);
 
   const { toast, show: showToast } = useToast();
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  useEffect(() => {
+    const fn = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener("resize", fn);
+    return () => window.removeEventListener("resize", fn);
+  }, []);
 
   // ── Load all data ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -720,50 +746,106 @@ export default function App() {
 
       {/* Top bar */}
       <div style={{ background:C.white, borderBottom:`1px solid ${C.gray3}`,
-                    padding:"0 24px", display:"flex", alignItems:"center",
-                    boxShadow:"0 1px 4px rgba(0,0,0,.05)" }}>
-        <div style={{ marginRight:20, padding:"12px 0" }}><Logo size={22} /></div>
-        <div style={{ width:1, height:30, background:C.gray3, marginRight:8 }} />
-        {[
-          ["timesheet","Timesheet"],
-          ["employees","Pracownicy"],
-          ...(isAdmin ? [["projects","Projekty"],["managers","Kierownicy"]] : []),
-          ["report","Raport"],
-        ].map(([key,label])=>(
-          <button key={key} className={`nav-tab${tab===key?" active":""}`}
-            onClick={()=>setTab(key)}>{label}</button>
-        ))}
-        <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:12 }}>
-          <div style={{ textAlign:"right" }}>
-            <div style={{ fontSize:13, fontWeight:600, color:C.gray6 }}>{currentManager.name}</div>
-            <div style={{ fontSize:11, color:C.gray4 }}>
-              {isAdmin?"Administrator":`${myProjects.length} projekt${myProjects.length===1?"":"ów"}`}
+                    padding: isMobile?"0 14px":"0 24px", display:"flex", alignItems:"center",
+                    boxShadow:"0 1px 4px rgba(0,0,0,.05)", position:"sticky", top:0, zIndex:50 }}>
+        <div style={{ marginRight: isMobile?10:20, padding:"10px 0" }}><Logo size={isMobile?18:22} /></div>
+        {!isMobile && <div style={{ width:1, height:30, background:C.gray3, marginRight:8 }} />}
+
+        {/* Desktop tabs */}
+        <div className="top-bar-tabs" style={{ display:"flex" }}>
+          {[
+            ["timesheet","Timesheet"],
+            ["employees","Pracownicy"],
+            ...(isAdmin ? [["projects","Projekty"],["managers","Kierownicy"]] : []),
+            ["report","Raport"],
+          ].map(([key,label])=>(
+            <button key={key} className={`nav-tab${tab===key?" active":""}`}
+              onClick={()=>setTab(key)}>{label}</button>
+          ))}
+        </div>
+
+        <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
+          {!isMobile && (
+            <div style={{ textAlign:"right" }}>
+              <div style={{ fontSize:13, fontWeight:600, color:C.gray6 }}>{currentManager.name}</div>
+              <div style={{ fontSize:11, color:C.gray4 }}>
+                {isAdmin?"Administrator":`${myProjects.length} projekt${myProjects.length===1?"":"ów"}`}
+              </div>
             </div>
-          </div>
-          <button className="btn-ghost" onClick={logout} style={{ fontSize:11 }}>Wyloguj</button>
+          )}
+          {!isMobile && <button className="btn-ghost" onClick={logout} style={{ fontSize:11 }}>Wyloguj</button>}
+
+          {/* Mobile hamburger */}
+          {isMobile && (
+            <button onClick={()=>setMobileNavOpen(o=>!o)} style={{
+              background:"none", border:"none", cursor:"pointer", padding:8,
+              fontSize:20, color:C.gray6, lineHeight:1
+            }}>☰</button>
+          )}
         </div>
       </div>
+
+      {/* Mobile nav drawer */}
+      {isMobile && mobileNavOpen && (
+        <div style={{ position:"fixed", inset:0, zIndex:100 }}>
+          <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,.4)" }}
+            onClick={()=>setMobileNavOpen(false)} />
+          <div style={{ position:"absolute", top:0, left:0, bottom:0, width:240,
+                        background:C.white, boxShadow:"4px 0 20px rgba(0,0,0,.15)",
+                        display:"flex", flexDirection:"column", padding:"20px 0" }}>
+            <div style={{ padding:"0 20px 16px", borderBottom:`1px solid ${C.gray2}` }}>
+              <Logo size={20} />
+              <div style={{ fontSize:13, fontWeight:600, color:C.gray6, marginTop:10 }}>{currentManager.name}</div>
+              <div style={{ fontSize:11, color:C.gray4 }}>{isAdmin?"Administrator":`${myProjects.length} projektów`}</div>
+            </div>
+            <div style={{ flex:1, padding:"12px 0" }}>
+              {[
+                ["timesheet","📋 Timesheet"],
+                ["employees","👥 Pracownicy"],
+                ...(isAdmin ? [["projects","📁 Projekty"],["managers","👤 Kierownicy"]] : []),
+                ["report","📊 Raport"],
+              ].map(([key,label])=>(
+                <button key={key} onClick={()=>{setTab(key);setMobileNavOpen(false);}} style={{
+                  display:"block", width:"100%", textAlign:"left",
+                  padding:"12px 20px", background: tab===key ? C.blueLight : "none",
+                  color: tab===key ? C.blue : C.gray6,
+                  border:"none", fontFamily:"Inter,sans-serif", fontSize:14,
+                  fontWeight: tab===key ? 600 : 400, cursor:"pointer",
+                  borderLeft: tab===key ? `3px solid ${C.blue}` : "3px solid transparent",
+                }}>{label}</button>
+              ))}
+            </div>
+            <div style={{ padding:"16px 20px", borderTop:`1px solid ${C.gray2}` }}>
+              <button className="btn-ghost" onClick={logout} style={{ width:"100%", textAlign:"center" }}>
+                Wyloguj
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ TIMESHEET ═══ */}
       {tab==="timesheet" && (
         <div style={{ display:"flex", flexDirection:"column", height:"calc(100vh - 53px)" }}>
           {/* toolbar */}
           <div style={{ background:C.white, borderBottom:`1px solid ${C.gray3}`,
-                        padding:"8px 20px", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
+                        padding: isMobile?"8px 12px":"8px 20px",
+                        display:"flex", alignItems:"center", gap: isMobile?8:12,
+                        flexShrink:0, flexWrap: isMobile?"wrap":"nowrap" }}>
             <button className="btn-ghost" onClick={prevMonth} style={{ padding:"5px 10px", fontSize:14, flexShrink:0 }}>‹</button>
-            <div style={{ fontWeight:600, fontSize:14, color:C.gray7, width:148, textAlign:"center", flexShrink:0 }}>
+            <div style={{ fontWeight:600, fontSize:14, color:C.gray7, width:isMobile?130:148, textAlign:"center", flexShrink:0 }}>
               {MONTHS[month]} {year}
             </div>
             <button className="btn-ghost" onClick={nextMonth} style={{ padding:"5px 10px", fontSize:14, flexShrink:0 }}>›</button>
-            <div style={{ width:1, height:24, background:C.gray3, flexShrink:0 }} />
+            {!isMobile && <div style={{ width:1, height:24, background:C.gray3, flexShrink:0 }} />}
 
             {myProjects.length===0
               ? <span style={{ color:C.gray4, fontSize:12 }}>Brak przypisanych projektów</span>
               : (<>
-                  <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
-                    <span style={{ fontSize:11, color:C.gray5, fontWeight:500 }}>Projekt</span>
+                  <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0, flex: isMobile?"1":"none" }}>
+                    {!isMobile && <span style={{ fontSize:11, color:C.gray5, fontWeight:500 }}>Projekt</span>}
                     <select className="inp" value={activeProj||""} onChange={e=>setActiveProj(e.target.value||null)}
-                      style={{ width:260, padding:"7px 10px", fontSize:13, fontWeight:500, color:C.gray7,
+                      style={{ width: isMobile?"100%":260, padding:"7px 10px", fontSize:13, fontWeight:500, color:C.gray7,
                                borderColor:activeProj?C.blue:C.gray3,
                                boxShadow:activeProj?`0 0 0 3px ${C.blueLight}`:"none" }}>
                       <option value="">— wszyscy pracownicy —</option>
@@ -775,12 +857,19 @@ export default function App() {
                     </select>
                   </div>
                   <div style={{ width:1, height:24, background:C.gray3, flexShrink:0 }} />
+                  {!isMobile && (
                   <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:0 }}>
                     <span style={{ fontSize:11, color:C.gray5, fontWeight:500, whiteSpace:"nowrap" }}>Szukaj</span>
                     <input className="inp" placeholder="imię lub nazwisko…" value={searchQ}
                       onChange={e=>setSearchQ(e.target.value)}
                       style={{ flex:1, minWidth:0, padding:"7px 11px", fontSize:13 }} />
                   </div>
+                  )}
+                  {isMobile && (
+                  <input className="inp" placeholder="🔍 szukaj…" value={searchQ}
+                    onChange={e=>setSearchQ(e.target.value)}
+                    style={{ flex:1, padding:"6px 10px", fontSize:12 }} />
+                  )}
                 </>)
             }
             <div style={{ display:"flex", gap:6, flexShrink:0 }}>
@@ -797,11 +886,13 @@ export default function App() {
               <table style={{ borderCollapse:"collapse", minWidth:"100%", fontSize:12 }}>
                 <thead style={{ position:"sticky", top:0, zIndex:10 }}>
                   <tr style={{ background:C.gray2 }}>
-                    <th style={{ ...TH, width:210, position:"sticky", left:0, zIndex:11,
-                                 background:C.gray2, textAlign:"left", padding:"10px 16px",
-                                 borderRight:`1px solid ${C.gray3}`, color:C.gray5 }}>PRACOWNIK</th>
+                    <th style={{ ...TH, width: isMobile?110:210, position:"sticky", left:0, zIndex:11,
+                                 background:C.gray2, textAlign:"left", padding: isMobile?"8px 8px":"10px 16px",
+                                 borderRight:`1px solid ${C.gray3}`, color:C.gray5 }}>
+                      {isMobile?"PRAC.":"PRACOWNIK"}
+                    </th>
                     {Array.from({length:days},(_,i)=>i+1).map(d=>(
-                      <th key={d} style={{ ...TH, width:36, minWidth:36,
+                      <th key={d} style={{ ...TH, width: isMobile?28:36, minWidth: isMobile?28:36,
                         background:isWeekend(year,month,d)?C.wknd:C.gray2,
                         borderBottom:`1px solid ${C.gray3}` }}>
                         <div style={{ color:isWeekend(year,month,d)?C.gray3:C.blue, fontSize:13, fontWeight:600 }}>{d}</div>
@@ -827,18 +918,19 @@ export default function App() {
                       <tr key={emp.id} className="emp-row"
                         style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
                         <td style={{ position:"sticky", left:0, zIndex:2, background:rowBg,
-                                     borderRight:`1px solid ${C.gray2}`, padding:"6px 14px", whiteSpace:"nowrap" }}>
+                                     borderRight:`1px solid ${C.gray2}`,
+                                     padding: isMobile?"5px 6px":"6px 14px", whiteSpace:"nowrap" }}>
                           <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                            <div style={{ width:28, height:28, borderRadius:"50%", background:C.blueLight,
+                            <div style={{ width:26, height:26, borderRadius:"50%", background:C.blueLight,
                                           color:C.blue, display:"flex", alignItems:"center", justifyContent:"center",
-                                          fontSize:11, fontWeight:600, flexShrink:0 }}>
+                                          fontSize:10, fontWeight:600, flexShrink:0 }}>
                               {emp.first_name[0]}{emp.last_name[0]}
                             </div>
                             <div>
-                              <div style={{ fontWeight:500, color:C.gray7, fontSize:12 }}>
-                                {emp.first_name} {emp.last_name}
+                              <div style={{ fontWeight:500, color:C.gray7, fontSize: isMobile?11:12 }}>
+                                {isMobile ? emp.last_name : `${emp.first_name} ${emp.last_name}`}
                               </div>
-                              {emp.uk_number && <div style={{ fontSize:10, color:C.gray4 }}>{emp.uk_number}</div>}
+                              {!isMobile && emp.uk_number && <div style={{ fontSize:10, color:C.gray4 }}>{emp.uk_number}</div>}
                             </div>
                             {emp.is_student?<span className="tag-s">STU</span>:<span className="tag-p">PR</span>}
                           </div>
@@ -920,7 +1012,7 @@ export default function App() {
         const activeFilter = empProjFilter;
 
         return (
-        <div style={{ padding:"24px 28px", overflowX:"auto" }}>
+        <div style={{ padding: isMobile?"12px 14px":"24px 28px", overflowX:"auto" }}>
           {/* toolbar */}
           <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16, flexWrap:"wrap" }}>
             <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Pracownicy</div>
@@ -1032,7 +1124,7 @@ export default function App() {
 
       {/* ═══ PROJECTS ═══ */}
       {tab==="projects"&&isAdmin&&(
-        <div style={{ padding:"24px 28px", maxWidth:1100 }}>
+        <div className="page-pad" style={{ padding:"24px 28px", maxWidth:1100 }}>
           <div style={{ display:"flex", alignItems:"center", marginBottom:20, gap:10 }}>
             <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Projekty</div>
             <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
@@ -1201,7 +1293,7 @@ export default function App() {
           </div>
 
           {/* KPI cards */}
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:20 }}>
+          <div className="kpi-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:20 }}>
             {[
               { label:"Łączne godziny",     value:`${totalAllH}h`,        sub:`${myProjects.filter(p=>projTotal(p.id)>0).length} aktywnych projektów` },
               { label:"Aktywni pracownicy", value:activeEmps.length,       sub:`${activeStudents} studentów / ${activeWorkers} pracowników` },
@@ -1265,7 +1357,7 @@ export default function App() {
           </div>
 
           {/* project table */}
-          <div style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10,
+          <div className="report-table-scroll" style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10,
                         overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
             <div style={{ padding:"14px 18px", borderBottom:`1px solid ${C.gray2}`,
                           fontSize:12, fontWeight:600, color:C.gray6 }}>
