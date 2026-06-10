@@ -1171,12 +1171,13 @@ export default function App() {
                 const mgrs=managers.filter(m=>mgrProjects.some(mp=>mp.manager_id===m.id&&mp.project_id===p.id)&&!m.is_admin);
                 const rowBg = ri%2===0 ? C.white : "#F8FAFC";
                 return (
-                  <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}`, cursor:"pointer" }}
-                    onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}
+                  <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}
                     onMouseEnter={e=>e.currentTarget.style.background=C.blueLight}
                     onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
-                    <td style={{ padding:"8px 12px", color:C.gray4, fontWeight:500, whiteSpace:"nowrap" }}>{p.number||"—"}</td>
-                    <td style={{ padding:"8px 12px", fontWeight:600, color:C.gray7 }}>{p.name}</td>
+                    <td style={{ padding:"8px 12px", color:C.gray4, fontWeight:500, whiteSpace:"nowrap", cursor:"pointer" }}
+                      onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}>{p.number||"—"}</td>
+                    <td style={{ padding:"8px 12px", fontWeight:600, color:C.gray7, cursor:"pointer" }}
+                      onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}>{p.name}</td>
                     <td style={{ padding:"8px 12px" }}>
                       <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
                         {mgrs.length===0
