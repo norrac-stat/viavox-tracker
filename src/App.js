@@ -197,17 +197,27 @@ export default function App() {
     loadAll();
   }, []);
 
-  // ── Load hours for current month ──────────────────────────────────────────
+  // ── Load hours for current month (with pagination) ───────────────────────
   useEffect(() => {
     if (!currentManager) return;
     async function loadHours() {
       const from = toDateStr(year, month, 1);
       const to   = toDateStr(year, month, daysInMonth(year, month));
-      const { data } = await supabase.from("hours")
-        .select("*").gte("work_date", from).lte("work_date", to);
       const map = {};
-      for (const row of (data || [])) {
-        map[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.hours);
+      const PAGE = 1000;
+      let from_idx = 0;
+      while (true) {
+        const { data, error } = await supabase.from("hours")
+          .select("*")
+          .gte("work_date", from)
+          .lte("work_date", to)
+          .range(from_idx, from_idx + PAGE - 1);
+        if (error || !data || data.length === 0) break;
+        for (const row of data) {
+          map[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.hours);
+        }
+        if (data.length < PAGE) break;
+        from_idx += PAGE;
       }
       setHoursMap(map);
     }
