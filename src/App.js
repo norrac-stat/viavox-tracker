@@ -348,13 +348,13 @@ export default function App() {
   }
 
   async function saveEditProject() {
-    if (!fProjName.trim()) return;
+    if (!editProjName.trim()) return;
     const { error } = await supabase.from("projects")
-      .update({ name: fProjName.trim(), number: fProjNumber.trim() })
+      .update({ name: editProjName.trim(), number: editProjNum.trim() })
       .eq("id", editingProj.id);
     if (error) { showToast("Błąd zapisu", "err"); return; }
     setProjects(prev => prev.map(p =>
-      p.id === editingProj.id ? { ...p, name: fProjName.trim(), number: fProjNumber.trim() } : p
+      p.id === editingProj.id ? { ...p, name: editProjName.trim(), number: editProjNum.trim() } : p
     ));
     setModal(null); showToast("Projekt zaktualizowany");
   }
@@ -1199,8 +1199,8 @@ export default function App() {
                             e.stopPropagation();
                             e.preventDefault();
                             setEditingProj({...p});
-                            setFProjName(p.name);
-                            setFProjNumber(p.number||"");
+                            setEditProjName(p.name);
+                            setEditProjNum(p.number||"");
                             setModal("editProj");
                           }}>✎ Edytuj</button>
                         <button className="btn-danger" style={{ padding:"3px 8px", fontSize:11 }}
@@ -1720,13 +1720,13 @@ export default function App() {
             <div style={{ fontWeight:700, fontSize:18, color:C.gray7 }}>Edytuj projekt</div>
             <div>
               <label className="lbl">Nazwa projektu</label>
-              <input className="inp" placeholder="np. Projekt Delta" value={fProjName}
-                onChange={e=>setFProjName(e.target.value)} />
+              <input className="inp" placeholder="np. Projekt Delta" value={editProjName}
+                onChange={e=>setEditProjName(e.target.value)} />
             </div>
             <div>
               <label className="lbl">Numer projektu</label>
-              <input className="inp" placeholder="np. 2024-001" value={fProjNumber}
-                onChange={e=>setFProjNumber(e.target.value)}
+              <input className="inp" placeholder="np. 2024-001" value={editProjNum}
+                onChange={e=>setEditProjNum(e.target.value)}
                 onKeyDown={e=>e.key==="Enter"&&saveEditProject()} />
             </div>
             <div style={{ display:"flex", gap:10 }}>
