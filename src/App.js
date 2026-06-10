@@ -129,7 +129,7 @@ export default function App() {
   const [managers,   setManagers]   = useState([]);
   const [rates,      setRates]      = useState({});
   const [reportSortCol, setReportSortCol] = useState('rev');
-  const [reportSortDir, setReportSortDir] = useState('desc'); // number -> rate
+  const [reportSortDir, setReportSortDir] = useState('desc');
   const [employees,  setEmployees]  = useState([]);
   const [projects,   setProjects]   = useState([]);
   const [mgrProjects,setMgrProjects]= useState([]); // manager_projects rows
@@ -572,76 +572,71 @@ export default function App() {
     if (!XLSX) { showToast("Błąd: biblioteka XLSX niedostępna", "err"); return; }
 
     const monthName = MONTHS[month];
+    const numDays   = daysInMonth(year, month);
     const wb = XLSX.utils.book_new();
 
-    // One sheet per project
     myProjects.forEach(proj => {
-      const projEmps = employees.filter(e => {
-        const ep = totalsCache.empProj[proj.id] || {};
-        return (ep[e.id] || 0) > 0;
-      });
+      const ep = totalsCache.empProj[proj.id] || {};
+      const projEmps = employees.filter(e => (ep[e.id] || 0) > 0);
       if (projEmps.length === 0) return;
 
-      const days = daysInMonth(year, month);
-      // Header row
+      // Header
       const header = ["Nazwisko", "Imię", "Nr UK", "Student",
-        ...Array.from({length: days}, (_, i) => `${i+1}.${String(month+1).padStart(2,"0")}.${year}`),
+        ...Array.from({length: numDays}, (_, i) =>
+          `${i+1}.${String(month+1).padStart(2,"0")}.${year}`),
         "SUMA"
       ];
 
       const rows = [header];
+
+      // Data rows
       projEmps.forEach(emp => {
-        const dayVals = Array.from({length: days}, (_, i) => {
-          const d = i + 1;
+        const vals = [];
+        let suma = 0;
+        for (let d = 1; d <= numDays; d++) {
           const key = `${proj.id}|${emp.id}|${toDateStr(year, month, d)}`;
-          const v = hoursMap[key];
-          return v ? parseFloat(v) : 0;
-        });
-        const suma = Math.round(dayVals.reduce((s,v)=>s+v,0)*100)/100;
+          const h = parseFloat(hoursMap[key]) || 0;
+          vals.push(h > 0 ? h : 0);
+          suma += h;
+        }
         rows.push([
           emp.last_name, emp.first_name, emp.uk_number || "",
           emp.is_student ? "TAK" : "NIE",
-          ...dayVals,
-          suma
+          ...vals,
+          Math.round(suma * 100) / 100
         ]);
       });
 
       // Totals row
-      const totalsRow = ["SUMA DZIENNA", "", "", ""];
-      for (let d = 1; d <= days; d++) {
-        totalsRow.push(dayVals => {
-          const t = projEmps.reduce((s, e) => {
-            const key = `${proj.id}|${e.id}|${toDateStr(year, month, d)}`;
-            return s + (parseFloat(hoursMap[key]) || 0);
-          }, 0);
-          return Math.round(t*100)/100;
-        });
-      }
-      // simpler totals
       const totals = ["SUMA DZIENNA", "", "", ""];
-      for (let d = 1; d <= days; d++) {
+      let grandTotal = 0;
+      for (let d = 1; d <= numDays; d++) {
         const t = projEmps.reduce((s, e) => {
           const key = `${proj.id}|${e.id}|${toDateStr(year, month, d)}`;
           return s + (parseFloat(hoursMap[key]) || 0);
         }, 0);
-        totals.push(Math.round(t*100)/100);
+        const rounded = Math.round(t * 100) / 100;
+        totals.push(rounded);
+        grandTotal += rounded;
       }
-      totals.push(Math.round(totals.slice(4).reduce((s,v)=>s+v,0)*100)/100);
+      totals.push(Math.round(grandTotal * 100) / 100);
       rows.push(totals);
 
       const ws = XLSX.utils.aoa_to_sheet(rows);
-      // Set column widths
       ws['!cols'] = [
         {wch:18}, {wch:14}, {wch:12}, {wch:8},
-        ...Array(days).fill({wch:5}),
+        ...Array(numDays).fill({wch:5}),
         {wch:8}
       ];
-      const sheetName = (proj.number ? `[${proj.number}] ` : '') + proj.name;
-      XLSX.utils.book_append_sheet(wb, ws, sheetName.substring(0, 31));
+      const sheetName = ((proj.number ? `[${proj.number}] ` : '') + proj.name).substring(0, 31);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
     });
 
+    if (wb.SheetNames.length === 0) {
+      showToast("Brak danych do eksportu", "err"); return;
+    }
     XLSX.writeFile(wb, `VIAVOX_${monthName}_${year}.xlsx`);
-    showToast(`Eksport: VIAVOX_${monthName}_${year}.xlsx`);
+    showToast(`Pobrano: VIAVOX_${monthName}_${year}.xlsx`);
   }
 
   function prevMonth() { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); }
