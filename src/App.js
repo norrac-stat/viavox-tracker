@@ -181,24 +181,32 @@ export default function App() {
   useEffect(() => {
     async function loadAll() {
       setLoading(true);
-      const [{ data: mgrs }, { data: emps }, { data: projs }, { data: mp }] = await Promise.all([
-        supabase.from("managers").select("*").order("name"),
-        supabase.from("employees").select("*").order("last_name"),
-        supabase.from("projects").select("*").order("name"),
-        supabase.from("manager_projects").select("*"),
+      // Load critical data first (managers + projects) — show UI faster
+      const [{ data: mgrs }, { data: projs }, { data: mp }] = await Promise.all([
+        supabase.from("managers").select("id,name,pin,is_admin").order("name"),
+        supabase.from("projects").select("id,name,number").order("name"),
+        supabase.from("manager_projects").select("manager_id,project_id"),
       ]);
       setManagers(mgrs || []);
-      setEmployees(emps || []);
       setProjects(projs || []);
       setMgrProjects(mp || []);
-      // load rates separately — table may not exist yet
-      try {
-        const { data: rts } = await supabase.from("project_rates").select("*");
-        const ratesMap = {};
-        (rts || []).forEach(r => { ratesMap[r.number] = parseFloat(r.rate); });
-        setRates(ratesMap);
-      } catch(e) { console.warn("project_rates table not found — run setup_rates.sql first"); }
       setLoading(false);
+
+      // Load employees and rates in background (not needed for login)
+      supabase.from("employees")
+        .select("id,first_name,last_name,is_student,uk_number")
+        .order("last_name")
+        .then(({ data: emps }) => setEmployees(emps || []));
+
+      try {
+        supabase.from("project_rates").select("number,rate")
+          .then(({ data: rts }) => {
+            if (!rts) return;
+            const ratesMap = {};
+            rts.forEach(r => { ratesMap[r.number] = parseFloat(r.rate); });
+            setRates(ratesMap);
+          });
+      } catch(e) {}
     }
     loadAll();
   }, []);
@@ -207,17 +215,33 @@ export default function App() {
   useEffect(() => {
     if (!currentManager) return;
     async function loadHours() {
+      if (!currentManager) return;
       const from = toDateStr(year, month, 1);
       const to   = toDateStr(year, month, daysInMonth(year, month));
+
+      // Get project IDs for this manager only
+      const myProjIds = currentManager.is_admin
+        ? projects.map(p => p.id)
+        : mgrProjects.filter(mp => mp.manager_id === currentManager.id).map(mp => mp.project_id);
+
+      if (myProjIds.length === 0) return;
+
       const map = {};
       const PAGE = 1000;
       let from_idx = 0;
       while (true) {
-        const { data, error } = await supabase.from("hours")
-          .select("*")
+        let q = supabase.from("hours")
+          .select("project_id,employee_id,work_date,hours")
           .gte("work_date", from)
           .lte("work_date", to)
           .range(from_idx, from_idx + PAGE - 1);
+
+        // Filter by manager's projects (max 20 at once for performance)
+        if (!currentManager.is_admin && myProjIds.length <= 20) {
+          q = q.in("project_id", myProjIds);
+        }
+
+        const { data, error } = await q;
         if (error || !data || data.length === 0) break;
         for (const row of data) {
           map[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.hours);
