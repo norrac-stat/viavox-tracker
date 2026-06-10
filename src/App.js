@@ -295,13 +295,15 @@ export default function App() {
     for (let d = 1; d <= days; d++) {
       s += parseFloat(getH(projId, empId, d)) || 0;
     }
-    return s;
+    return Math.round(s * 100) / 100;
   }
   function dayTotal(projId, day) {
-    return employees.reduce((s, e) => s + (parseFloat(getH(projId, e.id, day)) || 0), 0);
+    const s = employees.reduce((s, e) => s + (parseFloat(getH(projId, e.id, day)) || 0), 0);
+    return Math.round(s * 100) / 100;
   }
   function projTotal(projId) {
-    return employees.reduce((s, e) => s + empTotal(projId, e.id), 0);
+    const s = employees.reduce((s, e) => s + empTotal(projId, e.id), 0);
+    return Math.round(s * 100) / 100;
   }
 
   // ── Login ─────────────────────────────────────────────────────────────────
@@ -343,6 +345,25 @@ export default function App() {
     setEmployees(prev => [...prev, data].sort((a,b) => a.last_name.localeCompare(b.last_name)));
     setFFirst(""); setFLast(""); setFStudent(false); setFUk("");
     setModal(null); showToast("Pracownik dodany");
+  }
+
+  async function saveEditProject() {
+    if (!fProjName.trim()) return;
+    const { error } = await supabase.from("projects")
+      .update({ name: fProjName.trim(), number: fProjNumber.trim() })
+      .eq("id", editingProj.id);
+    if (error) { showToast("Błąd zapisu", "err"); return; }
+    setProjects(prev => prev.map(p =>
+      p.id === editingProj.id ? { ...p, name: fProjName.trim(), number: fProjNumber.trim() } : p
+    ));
+    setModal(null); showToast("Projekt zaktualizowany");
+  }
+
+  function openEditProject(p) {
+    setEditingProj(p);
+    setFProjName(p.name);
+    setFProjNumber(p.number || "");
+    setModal("editProj");
   }
 
   async function addProject() {
@@ -1172,14 +1193,18 @@ export default function App() {
                     <td style={{ padding:"8px 12px", textAlign:"center", color:empCount>0?C.gray6:C.gray3, fontSize:12 }}>{empCount||"—"}</td>
                     <td style={{ padding:"8px 12px", textAlign:"center", color:total>0?C.blue:C.gray3, fontWeight:600, fontSize:12 }}>{total>0?`${total}h`:"—"}</td>
                     <td style={{ padding:"8px 12px", textAlign:"center" }} onClick={e=>e.stopPropagation()}>
-                      <button className="btn-danger" style={{ padding:"3px 8px", fontSize:11 }}
-                        onClick={async()=>{ if(!window.confirm(`Usunąć projekt "${p.name}"?`)) return;
-                          await supabase.from("projects").delete().eq("id",p.id);
-                          setProjects(prev=>prev.filter(x=>x.id!==p.id));
-                          setMgrProjects(prev=>prev.filter(mp=>mp.project_id!==p.id));
-                          if(activeProj===p.id) setActiveProj(null);
-                          showToast("Projekt usunięty");
-                        }}>✕</button>
+                      <div style={{ display:"flex", gap:4, justifyContent:"center" }}>
+                        <button className="btn-ghost" style={{ padding:"3px 8px", fontSize:11 }}
+                          onClick={()=>openEditProject(p)}>✎</button>
+                        <button className="btn-danger" style={{ padding:"3px 8px", fontSize:11 }}
+                          onClick={async()=>{ if(!window.confirm(`Usunąć projekt "${p.name}"?`)) return;
+                            await supabase.from("projects").delete().eq("id",p.id);
+                            setProjects(prev=>prev.filter(x=>x.id!==p.id));
+                            setMgrProjects(prev=>prev.filter(mp=>mp.project_id!==p.id));
+                            if(activeProj===p.id) setActiveProj(null);
+                            showToast("Projekt usunięty");
+                          }}>✕</button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1669,6 +1694,29 @@ export default function App() {
                   : `Dodaj ${importEmpsRows.length} pracowników`}
               </button>
               <button className="btn-ghost" onClick={()=>{setModal(null);setImportEmpsRows([]);}}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal==="editProj"&&(
+        <div className="modal-bg" onClick={()=>setModal(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div style={{ fontWeight:700, fontSize:18, color:C.gray7 }}>Edytuj projekt</div>
+            <div>
+              <label className="lbl">Nazwa projektu</label>
+              <input className="inp" placeholder="np. Projekt Delta" value={fProjName}
+                onChange={e=>setFProjName(e.target.value)} />
+            </div>
+            <div>
+              <label className="lbl">Numer projektu</label>
+              <input className="inp" placeholder="np. 2024-001" value={fProjNumber}
+                onChange={e=>setFProjNumber(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&saveEditProject()} />
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <button className="btn" onClick={saveEditProject}>Zapisz zmiany</button>
+              <button className="btn-ghost" onClick={()=>setModal(null)}>Anuluj</button>
             </div>
           </div>
         </div>
