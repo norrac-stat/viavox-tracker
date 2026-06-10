@@ -208,6 +208,7 @@ export default function App() {
   // ── Load hours for current month (with pagination) ───────────────────────
   useEffect(() => {
     if (!currentManager) return;
+    if (projects.length === 0) return; // wait for projects to load
     async function loadHours() {
       if (!currentManager) return;
       const from = toDateStr(year, month, 1);
@@ -246,7 +247,7 @@ export default function App() {
       setHoursMap(map);
     }
     loadHours();
-  }, [currentManager, year, month]);
+  }, [currentManager, year, month, projects, mgrProjects]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
   const myProjectIds = useMemo(() => {
