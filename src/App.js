@@ -61,7 +61,9 @@ select.inp option{background:${C.white};color:${C.gray7}}
 .pin-key:hover{background:${C.blueLight};border-color:${C.blue};color:${C.blue}}
 .pin-key:active{transform:scale(.94)}
 .proj-chip{display:inline-flex;align-items:center;gap:6px;background:${C.blueLight};border:1px solid ${C.blueMid};border-radius:20px;padding:4px 10px;font-size:11px;color:${C.blueDark};font-weight:500;}
-.checkbox-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.checkbox-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:320px;overflow-y:auto;padding-right:4px}
+.checkbox-grid::-webkit-scrollbar{width:4px}
+.checkbox-grid::-webkit-scrollbar-thumb{background:${C.gray3};border-radius:2px}
 .cb-item{display:flex;align-items:center;gap:8px;padding:9px 12px;background:${C.gray1};border:1px solid ${C.gray3};border-radius:6px;cursor:pointer;font-size:12px;color:${C.gray6};transition:all .15s}
 .cb-item:hover{border-color:${C.blue};background:${C.blueLight};color:${C.blue}}
 .cb-item input{accent-color:${C.blue};cursor:pointer;width:14px;height:14px}
@@ -118,12 +120,16 @@ function useToast() {
 // ══════════════════════════════════════════════════════════════════════════════
 export default function App() {
   // ── State ─────────────────────────────────────────────────────────────────
-  const [currentManager, setCurrentManager] = useState(null);
+  const [currentManager, setCurrentManager] = useState(() => {
+    try { const s = sessionStorage.getItem("vv_manager"); return s ? JSON.parse(s) : null; } catch { return null; }
+  });
   const [pinInput,   setPinInput]   = useState("");
   const [selMgrId,   setSelMgrId]   = useState("");
   const [loginError, setLoginError] = useState("");
   const [managers,   setManagers]   = useState([]);
-  const [rates,      setRates]      = useState({}); // number -> rate
+  const [rates,      setRates]      = useState({});
+  const [reportSortCol, setReportSortCol] = useState('rev');
+  const [reportSortDir, setReportSortDir] = useState('desc'); // number -> rate
   const [employees,  setEmployees]  = useState([]);
   const [projects,   setProjects]   = useState([]);
   const [mgrProjects,setMgrProjects]= useState([]); // manager_projects rows
@@ -335,6 +341,7 @@ export default function App() {
     const mgr = managers.find(m => m.id === selMgrId && m.pin === pin);
     if (mgr) {
       setCurrentManager(mgr);
+      try { sessionStorage.setItem("vv_manager", JSON.stringify(mgr)); } catch {}
       setLoginError("");
       setPinInput("");
       const myPIds = mgr.is_admin
@@ -350,6 +357,7 @@ export default function App() {
   function logout() {
     setCurrentManager(null); setPinInput(""); setSelMgrId("");
     setLoginError(""); setTab("timesheet"); setHoursMap({});
+    try { sessionStorage.removeItem("vv_manager"); } catch {}
   }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -1296,6 +1304,18 @@ export default function App() {
         const projRev = (p) => Math.round(projTotal(p.id) * getRate(p) * 100)/100;
         const fmt = (n) => { const v=Number(n); return isNaN(v)?'0,00':v.toLocaleString('pl-PL',{minimumFractionDigits:2,maximumFractionDigits:2}); };
 
+        const sortCol = reportSortCol;
+        const sortDir = reportSortDir;
+
+        function toggleSort(col) {
+          if (reportSortCol === col) setReportSortDir(d => d==='asc'?'desc':'asc');
+          else { setReportSortCol(col); setReportSortDir('desc'); }
+        }
+        function sortArrow(col) {
+          if (sortCol !== col) return <span style={{color:C.gray3, fontSize:10}}> ↕</span>;
+          return <span style={{color:C.blue, fontSize:10}}>{sortDir==='asc'?' ↑':' ↓'}</span>;
+        }
+
         const totalRevenue = Math.round(myProjects.reduce((s,p)=>s+projRev(p),0)*100)/100;
         const dailyAvg     = daysPassed>0 ? totalRevenue/daysPassed : 0;
         const forecastRev  = Math.round((totalRevenue + dailyAvg*daysLeft)*100)/100;
@@ -1314,7 +1334,22 @@ export default function App() {
             forecast:daysPassed>0?Math.round((projRev(p)/daysPassed)*daysTotal*100)/100:0,
           }))
           .filter(r=>r.h>0)
-          .sort((a,b)=>b.rev-a.rev);
+          .sort((a,b)=>{
+            const dir = sortDir==='asc' ? 1 : -1;
+            switch(sortCol) {
+              case 'name':     return dir*(a.p.name.localeCompare(b.p.name,'pl'));
+              case 'number':   return dir*((a.p.number||'').localeCompare(b.p.number||'','pl',{numeric:true}));
+              case 'empCount': return dir*(a.empCount-b.empCount);
+              case 'stuCount': return dir*(a.stuCount-b.stuCount);
+              case 'sH':       return dir*(a.sH-b.sH);
+              case 'wH':       return dir*(a.wH-b.wH);
+              case 'h':        return dir*(a.h-b.h);
+              case 'rate':     return dir*(a.rate-b.rate);
+              case 'forecast': return dir*(a.forecast-b.forecast);
+              case 'pct':      return dir*((a.h>0?a.sH/a.h:0)-(b.h>0?b.sH/b.h:0));
+              default:         return dir*(a.rev-b.rev);
+            }
+          });
 
         const totalForecast = Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100;
 
@@ -1407,8 +1442,27 @@ export default function App() {
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
               <thead>
                 <tr style={{ background:C.gray2 }}>
-                  {["Projekt","Nr","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie","Stawka","Przychód","Prognoza","% UZS"].map(h=>(
-                    <th key={h} style={{ padding:"8px 10px", textAlign:h==="Projekt"?"left":"center", fontSize:10, fontWeight:600, color:C.gray5, borderBottom:`1px solid ${C.gray3}` }}>{h}</th>
+                  {[
+                    {label:"Projekt",    col:"name"},
+                    {label:"Nr",         col:"number"},
+                    {label:"Prac.",      col:"empCount"},
+                    {label:"UZS",        col:"stuCount"},
+                    {label:"Godz. UZS",  col:"sH"},
+                    {label:"Godz. UZSO", col:"wH"},
+                    {label:"Łącznie",    col:"h"},
+                    {label:"Stawka",     col:"rate"},
+                    {label:"Przychód",   col:"rev"},
+                    {label:"Prognoza",   col:"forecast"},
+                    {label:"% UZS",      col:"pct"},
+                  ].map(({label,col})=>(
+                    <th key={col} onClick={()=>toggleSort(col)}
+                      style={{ padding:"8px 10px", textAlign:label==="Projekt"?"left":"center",
+                               fontSize:10, fontWeight:600, color:sortCol===col?C.blue:C.gray5,
+                               borderBottom:`1px solid ${C.gray3}`, cursor:"pointer",
+                               userSelect:"none", whiteSpace:"nowrap",
+                               background:sortCol===col?C.blueLight:C.gray2 }}>
+                      {label}{sortArrow(col)}
+                    </th>
                   ))}
                 </tr>
               </thead>
