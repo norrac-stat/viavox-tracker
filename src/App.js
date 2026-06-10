@@ -175,20 +175,23 @@ export default function App() {
   useEffect(() => {
     async function loadAll() {
       setLoading(true);
-      const [{ data: mgrs }, { data: emps }, { data: projs }, { data: mp }, { data: rts }] = await Promise.all([
+      const [{ data: mgrs }, { data: emps }, { data: projs }, { data: mp }] = await Promise.all([
         supabase.from("managers").select("*").order("name"),
         supabase.from("employees").select("*").order("last_name"),
         supabase.from("projects").select("*").order("name"),
         supabase.from("manager_projects").select("*"),
-        supabase.from("project_rates").select("*"),
       ]);
       setManagers(mgrs || []);
       setEmployees(emps || []);
       setProjects(projs || []);
       setMgrProjects(mp || []);
-      const ratesMap = {};
-      (rts || []).forEach(r => { ratesMap[r.number] = parseFloat(r.rate); });
-      setRates(ratesMap);
+      // load rates separately — table may not exist yet
+      try {
+        const { data: rts } = await supabase.from("project_rates").select("*");
+        const ratesMap = {};
+        (rts || []).forEach(r => { ratesMap[r.number] = parseFloat(r.rate); });
+        setRates(ratesMap);
+      } catch(e) { console.warn("project_rates table not found — run setup_rates.sql first"); }
       setLoading(false);
     }
     loadAll();
