@@ -161,12 +161,6 @@ export default function App() {
   const [importRows,  setImportRows]  = useState([]); // parsed preview rows
   const [importing,   setImporting]   = useState(false);
   const importFileRef   = useRef(null);
-  const importHoursRef  = useRef(null);
-  const importEmpsRef   = useRef(null);
-  const [importHoursRows, setImportHoursRows] = useState([]);
-  const [importEmpsRows,  setImportEmpsRows]  = useState([]);
-  const [importingHours,  setImportingHours]  = useState(false);
-  const [importingEmps,   setImportingEmps]   = useState(false);
 
   const { toast, show: showToast } = useToast();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
@@ -570,183 +564,84 @@ export default function App() {
     showToast(`Zaimportowano: ${projAdded} projektów, ${mgrAdded} nowych kierowników`);
   }
 
-  // ── Import godzin z Excel (timesheet) ────────────────────────────────────
-  function handleImportHoursFile(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      try {
-        // dynamically import xlsx library
-        const XLSX = window.XLSX;
-        if (!XLSX) { showToast("Błąd: biblioteka XLSX nie załadowana", "err"); return; }
-        const wb   = XLSX.read(ev.target.result, { type:"array" });
-        const ws   = wb.Sheets[wb.SheetNames[0]];
-        const raw  = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
 
-        // row 0 = title, row 1 = headers (days), row 2 = dow, row 3+ = data
-        const headerRow = raw[1] || [];
-        // find day columns: cols where header is a number 1-31
-        const dayCols = [];
-        for (let ci = 0; ci < headerRow.length; ci++) {
-          const v = headerRow[ci];
-          if (typeof v === "number" && v >= 1 && v <= 31) dayCols.push({ ci, day: v });
-        }
 
-        const rows = [];
-        for (let ri = 3; ri < raw.length; ri++) {
-          const row = raw[ri];
-          const last    = String(row[0]||"").trim();
-          const first   = String(row[1]||"").trim();
-          const uk      = String(row[2]||"").trim();
-          const student = String(row[3]||"").trim().toUpperCase() === "TAK";
-          const projRaw = String(row[4]||"").trim();
-          if (!last && !first) continue;
+  // ── Export do Excel ──────────────────────────────────────────────────────
+  function exportToExcel() {
+    const XLSX = window.XLSX;
+    if (!XLSX) { showToast("Błąd: biblioteka XLSX niedostępna", "err"); return; }
 
-          // parse project name/number
-          let projName = projRaw, projNum = "";
-          if (projRaw.includes(" / ")) {
-            const parts = projRaw.split(" / ");
-            projName = parts[0].trim();
-            projNum  = parts[1].trim();
-          }
+    const monthName = MONTHS[month];
+    const wb = XLSX.utils.book_new();
 
-          const hours = {};
-          for (const { ci, day } of dayCols) {
-            const v = row[ci];
-            const h = parseFloat(v);
-            if (!isNaN(h) && h > 0) hours[day] = h;
-          }
-          if (Object.keys(hours).length > 0) {
-            rows.push({ last, first, uk, student, projName, projNum, hours });
-          }
-        }
-        setImportHoursRows(rows);
-      } catch(err) {
-        showToast("Błąd odczytu pliku: " + err.message, "err");
+    // One sheet per project
+    myProjects.forEach(proj => {
+      const projEmps = employees.filter(e => {
+        const ep = totalsCache.empProj[proj.id] || {};
+        return (ep[e.id] || 0) > 0;
+      });
+      if (projEmps.length === 0) return;
+
+      const days = daysInMonth(year, month);
+      // Header row
+      const header = ["Nazwisko", "Imię", "Nr UK", "Student",
+        ...Array.from({length: days}, (_, i) => `${i+1}.${String(month+1).padStart(2,"0")}.${year}`),
+        "SUMA"
+      ];
+
+      const rows = [header];
+      projEmps.forEach(emp => {
+        const dayVals = Array.from({length: days}, (_, i) => {
+          const d = i + 1;
+          const key = `${proj.id}|${emp.id}|${toDateStr(year, month, d)}`;
+          const v = hoursMap[key];
+          return v ? parseFloat(v) : 0;
+        });
+        const suma = Math.round(dayVals.reduce((s,v)=>s+v,0)*100)/100;
+        rows.push([
+          emp.last_name, emp.first_name, emp.uk_number || "",
+          emp.is_student ? "TAK" : "NIE",
+          ...dayVals,
+          suma
+        ]);
+      });
+
+      // Totals row
+      const totalsRow = ["SUMA DZIENNA", "", "", ""];
+      for (let d = 1; d <= days; d++) {
+        totalsRow.push(dayVals => {
+          const t = projEmps.reduce((s, e) => {
+            const key = `${proj.id}|${e.id}|${toDateStr(year, month, d)}`;
+            return s + (parseFloat(hoursMap[key]) || 0);
+          }, 0);
+          return Math.round(t*100)/100;
+        });
       }
-    };
-    reader.readAsArrayBuffer(file);
-  }
-
-  async function runImportHours() {
-    if (!importHoursRows.length) return;
-    setImportingHours(true);
-    let addedEmps = 0, addedProjs = 0, addedHours = 0;
-
-    // detect month/year from activeProj context — use current year/month
-    for (const row of importHoursRows) {
-      // 1. upsert employee
-      let emp = employees.find(e =>
-        e.first_name.toLowerCase() === row.first.toLowerCase() &&
-        e.last_name.toLowerCase()  === row.last.toLowerCase()
-      );
-      if (!emp) {
-        const { data } = await supabase.from("employees").insert({
-          first_name: toTitleCase(row.first),
-          last_name:  toTitleCase(row.last),
-          is_student: row.student,
-          uk_number:  row.uk,
-        }).select().single();
-        if (data) { emp = data; setEmployees(prev => [...prev, data]); addedEmps++; }
+      // simpler totals
+      const totals = ["SUMA DZIENNA", "", "", ""];
+      for (let d = 1; d <= days; d++) {
+        const t = projEmps.reduce((s, e) => {
+          const key = `${proj.id}|${e.id}|${toDateStr(year, month, d)}`;
+          return s + (parseFloat(hoursMap[key]) || 0);
+        }, 0);
+        totals.push(Math.round(t*100)/100);
       }
-      if (!emp) continue;
+      totals.push(Math.round(totals.slice(4).reduce((s,v)=>s+v,0)*100)/100);
+      rows.push(totals);
 
-      // 2. upsert project
-      let proj = projects.find(p =>
-        p.name.toLowerCase() === row.projName.toLowerCase() &&
-        p.number === row.projNum
-      );
-      if (!proj && row.projName) {
-        const { data } = await supabase.from("projects").insert({
-          name: row.projName, number: row.projNum,
-        }).select().single();
-        if (data) { proj = data; setProjects(prev => [...prev, data]); addedProjs++; }
-      }
-      if (!proj) continue;
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      // Set column widths
+      ws['!cols'] = [
+        {wch:18}, {wch:14}, {wch:12}, {wch:8},
+        ...Array(days).fill({wch:5}),
+        {wch:8}
+      ];
+      const sheetName = (proj.number ? `[${proj.number}] ` : '') + proj.name;
+      XLSX.utils.book_append_sheet(wb, ws, sheetName.substring(0, 31));
+    });
 
-      // 3. insert hours
-      for (const [day, h] of Object.entries(row.hours)) {
-        const dateStr = `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-        await supabase.from("hours").upsert({
-          employee_id: emp.id, project_id: proj.id,
-          work_date: dateStr, hours: h,
-        }, { onConflict: "employee_id,project_id,work_date" });
-        const key = `${proj.id}|${emp.id}|${dateStr}`;
-        setHoursMap(prev => ({ ...prev, [key]: String(h) }));
-        addedHours++;
-      }
-    }
-
-    setImportingHours(false);
-    setModal(null);
-    setImportHoursRows([]);
-    if (importHoursRef.current) importHoursRef.current.value = "";
-    showToast(`Import: ${addedEmps} nowych pracowników, ${addedProjs} projektów, ${addedHours} godzin`);
-  }
-
-  // ── Import pracowników (bez godzin) ───────────────────────────────────────
-  function handleImportEmpsFile(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      try {
-        const XLSX = window.XLSX;
-        if (!XLSX) { showToast("Błąd: biblioteka XLSX nie załadowana", "err"); return; }
-        const wb   = XLSX.read(ev.target.result, { type:"array" });
-        const ws   = wb.Sheets[wb.SheetNames[0]];
-        const raw  = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
-
-        const rows = [];
-        const seen = new Set();
-        for (let ri = 1; ri < raw.length; ri++) {
-          const row = raw[ri];
-          const last    = String(row[0]||"").trim();
-          const first   = String(row[1]||"").trim();
-          const uk      = String(row[2]||"").trim();
-          const student = String(row[3]||"").trim().toUpperCase() === "TAK";
-          if (!last || !first) continue;
-          const key = `${first}|${last}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          rows.push({ last, first, uk, student });
-        }
-        setImportEmpsRows(rows);
-      } catch(err) {
-        showToast("Błąd odczytu pliku: " + err.message, "err");
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  }
-
-  async function runImportEmps() {
-    if (!importEmpsRows.length) return;
-    setImportingEmps(true);
-    let added = 0;
-    for (const row of importEmpsRows) {
-      const exists = employees.find(e =>
-        e.first_name.toLowerCase() === row.first.toLowerCase() &&
-        e.last_name.toLowerCase()  === row.last.toLowerCase()
-      );
-      if (exists) continue;
-      const { data } = await supabase.from("employees").insert({
-        first_name: toTitleCase(row.first),
-        last_name:  toTitleCase(row.last),
-        is_student: row.student,
-        uk_number:  row.uk,
-      }).select().single();
-      if (data) { setEmployees(prev => [...prev, data]); added++; }
-    }
-    setImportingEmps(false);
-    setModal(null);
-    setImportEmpsRows([]);
-    if (importEmpsRef.current) importEmpsRef.current.value = "";
-    showToast(`Dodano ${added} nowych pracowników`);
-  }
-
-  function toTitleCase(str) {
-    return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+    XLSX.writeFile(wb, `VIAVOX_${monthName}_${year}.xlsx`);
+    showToast(`Eksport: VIAVOX_${monthName}_${year}.xlsx`);
   }
 
   function prevMonth() { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); }
@@ -955,7 +850,7 @@ export default function App() {
                 </>)
             }
             <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-              <button className="btn-ghost btn-sm" onClick={()=>setModal("importHours")}>⬆ Importuj godziny</button>
+              <button className="btn-ghost btn-sm" onClick={exportToExcel}>⬇ Eksport Excel</button>
               {isAdmin && (
                 <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Pracownik</button>
               )}
@@ -1113,10 +1008,7 @@ export default function App() {
               <input className="inp" placeholder="imię lub nazwisko…" value={empSearch}
                 onChange={e=>setEmpSearch(e.target.value)} style={{ width:190, padding:"6px 10px", fontSize:12 }} />
             </div>
-            <div style={{ display:"flex", gap:6 }}>
-              <button className="btn-ghost btn-sm" onClick={()=>setModal("importEmps")}>⬆ Importuj pracowników</button>
-              {isAdmin&&<button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>}
-            </div>
+            {isAdmin&&<button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>}
           </div>
 
           {/* table */}
@@ -1420,6 +1312,7 @@ export default function App() {
             <span style={{ color:C.blue, fontWeight:600, fontSize:15 }}>{MONTHS[month]} {year}</span>
             <button className="btn-ghost" onClick={nextMonth} style={{ padding:"5px 10px", fontSize:14 }}>›</button>
             <span style={{ fontSize:11, color:C.gray4 }}>Dzień {daysPassed}/{daysTotal} — pozostało {daysLeft} dni</span>
+            <button className="btn-ghost btn-sm" style={{ marginLeft:"auto" }} onClick={exportToExcel}>⬇ Eksport Excel</button>
           </div>
 
           {/* KPI godziny */}
