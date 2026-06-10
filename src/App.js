@@ -1195,7 +1195,14 @@ export default function App() {
                     <td style={{ padding:"8px 12px", textAlign:"center" }} onClick={e=>e.stopPropagation()}>
                       <div style={{ display:"flex", gap:4, justifyContent:"center" }}>
                         <button className="btn-ghost" style={{ padding:"3px 8px", fontSize:11 }}
-                          onClick={e=>{e.stopPropagation();openEditProject(p);}}>✎</button>
+                          onClick={e=>{
+                            e.stopPropagation();
+                            e.preventDefault();
+                            setEditingProj({...p});
+                            setFProjName(p.name);
+                            setFProjNumber(p.number||"");
+                            setModal("editProj");
+                          }}>✎ Edytuj</button>
                         <button className="btn-danger" style={{ padding:"3px 8px", fontSize:11 }}
                           onClick={async()=>{ if(!window.confirm(`Usunąć projekt "${p.name}"?`)) return;
                             await supabase.from("projects").delete().eq("id",p.id);
@@ -1272,14 +1279,14 @@ export default function App() {
       {/* ═══ REPORT ═══ */}
       {tab==="report"&&(()=>{
         // ── obliczenia ────────────────────────────────────────────────────────
-        const totalAllH   = myProjects.reduce((s,p)=>s+projTotal(p.id),0);
+        const totalAllH   = Math.round(myProjects.reduce((s,p)=>s+projTotal(p.id),0)*100)/100;
         const studentEmps = employees.filter(e=>e.is_student);
         const workerEmps  = employees.filter(e=>!e.is_student);
 
-        const studentH = myProjects.reduce((s,p)=>
-          s+studentEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0);
-        const workerH  = myProjects.reduce((s,p)=>
-          s+workerEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0);
+        const studentH = Math.round(myProjects.reduce((s,p)=>
+          s+studentEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0)*100)/100;
+        const workerH  = Math.round(myProjects.reduce((s,p)=>
+          s+workerEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0)*100)/100;
 
         const activeEmps  = employees.filter(e=>
           myProjects.some(p=>empTotal(p.id,e.id)>0));
@@ -1322,8 +1329,8 @@ export default function App() {
             {[
               { label:"Łączne godziny",     value:`${totalAllH}h`,        sub:`${myProjects.filter(p=>projTotal(p.id)>0).length} aktywnych projektów` },
               { label:"Aktywni pracownicy", value:activeEmps.length,       sub:`${activeStudents} studentów / ${activeWorkers} pracowników` },
-              { label:"Godziny studentów",  value:`${studentH}h`,          sub:`${stuPct}% całości` },
-              { label:"Godziny pracowników",value:`${workerH}h`,           sub:`${worPct}% całości` },
+              { label:"Godziny UZS",  value:`${studentH}h`,          sub:`${stuPct}% całości` },
+              { label:"Godziny UZSO",value:`${workerH}h`,           sub:`${worPct}% całości` },
             ].map(({label,value,sub})=>(
               <div key={label} style={{ background:C.white, border:`1px solid ${C.gray3}`,
                 borderRadius:10, padding:"16px 18px", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
@@ -1338,22 +1345,22 @@ export default function App() {
           <div style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10,
                         padding:"16px 20px", marginBottom:16, boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
             <div style={{ fontSize:12, fontWeight:600, color:C.gray6, marginBottom:10 }}>
-              Podział godzin: Studenci vs Pracownicy
+              Podział godzin: UZS (studenci) vs UZSO (pracownicy)
             </div>
             <div style={{ display:"flex", height:28, borderRadius:6, overflow:"hidden", gap:2 }}>
               <div style={{ width:`${stuPct}%`, background:"#3DAA70", display:"flex", alignItems:"center",
                             justifyContent:"center", color:"#fff", fontSize:11, fontWeight:600, minWidth:stuPct>5?0:0,
                             transition:"width .4s" }}>
-                {stuPct>8?`${stuPct}% STU`:""}
+                {stuPct>8?`${stuPct}% UZS`:""}
               </div>
               <div style={{ flex:1, background:C.blue, display:"flex", alignItems:"center",
                             justifyContent:"center", color:"#fff", fontSize:11, fontWeight:600 }}>
-                {worPct>8?`${worPct}% PR`:""}
+                {worPct>8?`${worPct}% UZSO`:""}
               </div>
             </div>
             <div style={{ display:"flex", gap:20, marginTop:8, fontSize:11 }}>
-              <span style={{ color:"#3DAA70", fontWeight:500 }}>● Studenci: {studentH}h ({stuPct}%)</span>
-              <span style={{ color:C.blue, fontWeight:500 }}>● Pracownicy: {workerH}h ({worPct}%)</span>
+              <span style={{ color:"#3DAA70", fontWeight:500 }}>● UZS: {studentH}h ({stuPct}%)</span>
+              <span style={{ color:C.blue, fontWeight:500 }}>● UZSO: {workerH}h ({worPct}%)</span>
             </div>
           </div>
 
@@ -1363,18 +1370,26 @@ export default function App() {
             <div style={{ fontSize:12, fontWeight:600, color:C.gray6, marginBottom:12 }}>
               Godziny dzienne — {MONTHS[month]} {year}
             </div>
-            <div style={{ display:"flex", alignItems:"flex-end", gap:3, height:80 }}>
+            <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:120, padding:"0 4px" }}>
               {dailyH.map(({d,h})=>{
                 const dow = new Date(year,month,d).getDay();
                 const wknd = dow===0||dow===6;
                 const pct = maxDay>0 ? (h/maxDay)*100 : 0;
                 return (
-                  <div key={d} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
-                    <div style={{ width:"100%", borderRadius:"2px 2px 0 0",
-                                  height:`${pct}%`, minHeight: h>0?4:0,
+                  <div key={d} style={{ flex:1, display:"flex", flexDirection:"column",
+                                        alignItems:"center", justifyContent:"flex-end", gap:3, height:"100%" }}>
+                    {h>0 && (
+                      <div style={{ fontSize:8, color: wknd?C.gray4:C.blue, fontWeight:500, lineHeight:1 }}>
+                        {h}
+                      </div>
+                    )}
+                    <div style={{ width:"100%", borderRadius:"3px 3px 0 0",
+                                  height:`${Math.max(pct,h>0?3:0)}%`,
                                   background: wknd ? C.gray3 : C.blue,
-                                  transition:"height .3s" }} title={`${d}.${month+1}: ${h}h`}/>
-                    <div style={{ fontSize:8, color: wknd?C.gray3:C.gray4 }}>{d}</div>
+                                  transition:"height .3s",
+                                  boxShadow: h>0&&!wknd?"0 1px 3px rgba(74,144,196,.3)":"none" }}
+                         title={`${d}.${month+1}: ${h}h`}/>
+                    <div style={{ fontSize:8, color: wknd?C.gray3:C.gray5, marginTop:2 }}>{d}</div>
                   </div>
                 );
               })}
