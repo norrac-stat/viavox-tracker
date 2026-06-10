@@ -1255,59 +1255,48 @@ export default function App() {
       )}
 
       {/* ═══ REPORT ═══ */}
-      {tab==="report"&&(()=>{
-        const today = new Date();
-        const daysTotal   = daysInMonth(year, month);
-        const daysPassed  = (year === today.getFullYear() && month === today.getMonth())
-          ? today.getDate()
-          : daysTotal;
-        const daysLeft    = daysTotal - daysPassed;
+      {tab==="report" && (()=>{
+        const today      = new Date();
+        const daysTotal  = daysInMonth(year, month);
+        const daysPassed = (year===today.getFullYear()&&month===today.getMonth()) ? today.getDate() : daysTotal;
+        const daysLeft   = daysTotal - daysPassed;
 
-        const totalAllH   = Math.round(myProjects.reduce((s,p)=>s+projTotal(p.id),0)*100)/100;
-        const studentEmps = employees.filter(e=>e.is_student);
-        const workerEmps  = employees.filter(e=>!e.is_student);
-        const studentH = Math.round(myProjects.reduce((s,p)=>s+studentEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0)*100)/100;
-        const workerH  = Math.round(myProjects.reduce((s,p)=>s+workerEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0)*100)/100;
-        const activeEmps  = employees.filter(e=>myProjects.some(p=>empTotal(p.id,e.id)>0));
+        const studentEmps  = employees.filter(e=>e.is_student);
+        const workerEmps   = employees.filter(e=>!e.is_student);
+        const totalAllH    = Math.round(myProjects.reduce((s,p)=>s+projTotal(p.id),0)*100)/100;
+        const studentH     = Math.round(myProjects.reduce((s,p)=>s+studentEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0)*100)/100;
+        const workerH      = Math.round(myProjects.reduce((s,p)=>s+workerEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0)*100)/100;
+        const activeEmps   = employees.filter(e=>myProjects.some(p=>empTotal(p.id,e.id)>0));
         const activeStudents = activeEmps.filter(e=>e.is_student).length;
         const activeWorkers  = activeEmps.filter(e=>!e.is_student).length;
         const stuPct = totalAllH>0 ? Math.round((studentH/totalAllH)*100) : 0;
-        const worPct = 100 - stuPct;
+        const worPct = 100-stuPct;
 
-        // Revenue calculations
-        function projRevenue(p) {
-          const rate = (p && p.number && rates[p.number]) ? rates[p.number] : 0;
-          const h = projTotal(p.id) || 0;
-          return Math.round(h * rate * 100) / 100;
-        }
-        const totalRevenue   = Math.round(myProjects.reduce((s,p)=>s+projRevenue(p),0)*100)/100;
-        const dailyAvgRev    = daysPassed > 0 ? totalRevenue / daysPassed : 0;
-        const forecastRev    = Math.round((totalRevenue + dailyAvgRev * daysLeft)*100)/100;
+        const getRate = (p) => (p && p.number && rates && rates[p.number]) ? Number(rates[p.number]) : 0;
+        const projRev = (p) => Math.round(projTotal(p.id) * getRate(p) * 100)/100;
+        const fmt = (n) => { const v=Number(n); return isNaN(v)?'0,00':v.toLocaleString('pl-PL',{minimumFractionDigits:2,maximumFractionDigits:2}); };
 
-        // daily hours
-        const dailyH = Array.from({length:daysTotal},(_,i)=>{
-          const d=i+1;
-          return { d, h: myProjects.reduce((s,p)=>s+dayTotal(p.id,d),0) };
-        });
-        const maxDay = Math.max(1, ...dailyH.map(x=>x.h).filter(h=>h>0), 1);
+        const totalRevenue = Math.round(myProjects.reduce((s,p)=>s+projRev(p),0)*100)/100;
+        const dailyAvg     = daysPassed>0 ? totalRevenue/daysPassed : 0;
+        const forecastRev  = Math.round((totalRevenue + dailyAvg*daysLeft)*100)/100;
 
-        // project rows sorted by revenue desc
+        const dailyH = Array.from({length:daysTotal},(_,i)=>({
+          d:i+1, h:Math.round(myProjects.reduce((s,p)=>s+dayTotal(p.id,i+1),0)*100)/100
+        }));
+        const maxDay = Math.max(1,...dailyH.map(x=>x.h));
+
         const projRows = [...myProjects]
-          .map(p=>({
-            p,
-            h:        projTotal(p.id),
-            sH:       studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0),
-            wH:       workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0),
-            empCount: employees.filter(e=>empTotal(p.id,e.id)>0).length,
-            stuCount: studentEmps.filter(e=>empTotal(p.id,e.id)>0).length,
-            rate:     rates[p.number] || 0,
-            rev:      projRevenue(p),
-            forecast: daysPassed>0 ? Math.round((projRevenue(p)/daysPassed)*daysTotal*100)/100 : 0,
+          .map(p=>({p, h:projTotal(p.id), rate:getRate(p), rev:projRev(p),
+            sH: Math.round(studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100,
+            wH: Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100,
+            empCount:employees.filter(e=>empTotal(p.id,e.id)>0).length,
+            stuCount:studentEmps.filter(e=>empTotal(p.id,e.id)>0).length,
+            forecast:daysPassed>0?Math.round((projRev(p)/daysPassed)*daysTotal*100)/100:0,
           }))
           .filter(r=>r.h>0)
           .sort((a,b)=>b.rev-a.rev);
 
-        const fmt = (n) => isNaN(n)||n==null ? '0,00' : Number(n).toLocaleString('pl-PL', {minimumFractionDigits:2, maximumFractionDigits:2});
+        const totalForecast = Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100;
 
         return (
         <div style={{ padding:"24px 28px", maxWidth:1100 }}>
@@ -1317,18 +1306,16 @@ export default function App() {
             <button className="btn-ghost" onClick={prevMonth} style={{ padding:"5px 10px", fontSize:14 }}>‹</button>
             <span style={{ color:C.blue, fontWeight:600, fontSize:15 }}>{MONTHS[month]} {year}</span>
             <button className="btn-ghost" onClick={nextMonth} style={{ padding:"5px 10px", fontSize:14 }}>›</button>
-            <span style={{ fontSize:11, color:C.gray4, marginLeft:4 }}>
-              Dzień {daysPassed} z {daysTotal} — pozostało {daysLeft} dni
-            </span>
+            <span style={{ fontSize:11, color:C.gray4 }}>Dzień {daysPassed}/{daysTotal} — pozostało {daysLeft} dni</span>
           </div>
 
-          {/* KPI row 1 - hours */}
+          {/* KPI godziny */}
           <div className="kpi-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:12 }}>
             {[
-              { label:"Łączne godziny",      value:`${totalAllH}h`,       sub:`${myProjects.filter(p=>projTotal(p.id)>0).length} aktywnych projektów` },
-              { label:"Aktywni pracownicy",  value:activeEmps.length,      sub:`${activeStudents} UZS / ${activeWorkers} UZSO` },
-              { label:"Godziny UZS",         value:`${studentH}h`,         sub:`${stuPct}% całości` },
-              { label:"Godziny UZSO",        value:`${workerH}h`,          sub:`${worPct}% całości` },
+              {label:"Łączne godziny",     value:`${totalAllH}h`,  sub:`${myProjects.filter(p=>projTotal(p.id)>0).length} aktywnych projektów`},
+              {label:"Aktywni pracownicy", value:activeEmps.length, sub:`${activeStudents} UZS / ${activeWorkers} UZSO`},
+              {label:"Godziny UZS",        value:`${studentH}h`,   sub:`${stuPct}% całości`},
+              {label:"Godziny UZSO",       value:`${workerH}h`,    sub:`${worPct}% całości`},
             ].map(({label,value,sub})=>(
               <div key={label} style={{ background:C.white, border:`1px solid ${C.gray3}`,
                 borderRadius:10, padding:"14px 16px", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
@@ -1339,49 +1326,30 @@ export default function App() {
             ))}
           </div>
 
-          {/* KPI row 2 - revenue */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
-            <div style={{ background:C.white, border:`2px solid ${C.blue}`, borderRadius:10,
-                          padding:"16px 20px", boxShadow:"0 2px 8px rgba(74,144,196,.12)" }}>
-              <div style={{ fontSize:10, color:C.gray4, fontWeight:500, marginBottom:5, textTransform:"uppercase", letterSpacing:".04em" }}>
+          {/* KPI przychód */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+            <div style={{ background:C.white, border:`2px solid ${C.blue}`, borderRadius:10, padding:"16px 20px" }}>
+              <div style={{ fontSize:10, color:C.gray4, fontWeight:500, marginBottom:5, textTransform:"uppercase" }}>
                 Przychód — {MONTHS[month]} (do teraz)
               </div>
-              <div style={{ fontSize:28, fontWeight:800, color:C.blue, lineHeight:1 }}>
-                {fmt(totalRevenue)} zł
-              </div>
-              <div style={{ fontSize:11, color:C.gray4, marginTop:6 }}>
-                Śr. dzienna: {fmt(dailyAvgRev)} zł · dzień {daysPassed}/{daysTotal}
-              </div>
+              <div style={{ fontSize:26, fontWeight:800, color:C.blue }}>{fmt(totalRevenue)} zł</div>
+              <div style={{ fontSize:11, color:C.gray4, marginTop:6 }}>Śr. dzienna: {fmt(dailyAvg)} zł · dzień {daysPassed}/{daysTotal}</div>
             </div>
-            <div style={{ background:C.white, border:`2px solid #3DAA70`, borderRadius:10,
-                          padding:"16px 20px", boxShadow:"0 2px 8px rgba(61,170,112,.12)" }}>
-              <div style={{ fontSize:10, color:C.gray4, fontWeight:500, marginBottom:5, textTransform:"uppercase", letterSpacing:".04em" }}>
+            <div style={{ background:C.white, border:`2px solid #3DAA70`, borderRadius:10, padding:"16px 20px" }}>
+              <div style={{ fontSize:10, color:C.gray4, fontWeight:500, marginBottom:5, textTransform:"uppercase" }}>
                 Prognoza przychodu — cały {MONTHS[month]}
               </div>
-              <div style={{ fontSize:28, fontWeight:800, color:"#3DAA70", lineHeight:1 }}>
-                {fmt(forecastRev)} zł
-              </div>
-              <div style={{ fontSize:11, color:C.gray4, marginTop:6 }}>
-                Pozostało {daysLeft} dni × {fmt(dailyAvgRev)} zł/dzień
-              </div>
+              <div style={{ fontSize:26, fontWeight:800, color:"#3DAA70" }}>{fmt(forecastRev)} zł</div>
+              <div style={{ fontSize:11, color:C.gray4, marginTop:6 }}>Pozostało {daysLeft} dni × {fmt(dailyAvg)} zł/dzień</div>
             </div>
           </div>
 
-          {/* UZS vs UZSO bar */}
-          <div style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10,
-                        padding:"14px 18px", marginBottom:14, boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
-            <div style={{ fontSize:12, fontWeight:600, color:C.gray6, marginBottom:10 }}>
-              Podział godzin: UZS (studenci) vs UZSO (pracownicy)
-            </div>
+          {/* UZS vs UZSO */}
+          <div style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10, padding:"14px 18px", marginBottom:14 }}>
+            <div style={{ fontSize:12, fontWeight:600, color:C.gray6, marginBottom:10 }}>Podział godzin: UZS vs UZSO</div>
             <div style={{ display:"flex", height:26, borderRadius:6, overflow:"hidden", gap:2 }}>
-              <div style={{ width:`${stuPct}%`, background:"#3DAA70", display:"flex", alignItems:"center",
-                            justifyContent:"center", color:"#fff", fontSize:11, fontWeight:600 }}>
-                {stuPct>8?`${stuPct}% UZS`:""}
-              </div>
-              <div style={{ flex:1, background:C.blue, display:"flex", alignItems:"center",
-                            justifyContent:"center", color:"#fff", fontSize:11, fontWeight:600 }}>
-                {worPct>8?`${worPct}% UZSO`:""}
-              </div>
+              {stuPct>0&&<div style={{ width:`${stuPct}%`, background:"#3DAA70", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:11, fontWeight:600 }}>{stuPct>8?`${stuPct}% UZS`:""}</div>}
+              <div style={{ flex:1, background:C.blue, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:11, fontWeight:600 }}>{worPct>8?`${worPct}% UZSO`:""}</div>
             </div>
             <div style={{ display:"flex", gap:20, marginTop:8, fontSize:11 }}>
               <span style={{ color:"#3DAA70", fontWeight:500 }}>● UZS: {studentH}h ({stuPct}%)</span>
@@ -1389,78 +1357,59 @@ export default function App() {
             </div>
           </div>
 
-          {/* daily chart */}
-          <div style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10,
-                        padding:"14px 18px", marginBottom:14, boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
-            <div style={{ fontSize:12, fontWeight:600, color:C.gray6, marginBottom:12 }}>
-              Godziny dzienne — {MONTHS[month]} {year}
-            </div>
-            <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:120, padding:"0 4px" }}>
+          {/* Wykres dzienny */}
+          <div style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10, padding:"14px 18px", marginBottom:14 }}>
+            <div style={{ fontSize:12, fontWeight:600, color:C.gray6, marginBottom:12 }}>Godziny dzienne — {MONTHS[month]} {year}</div>
+            <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:100, padding:"0 4px" }}>
               {dailyH.map(({d,h})=>{
-                const dow = new Date(year,month,d).getDay();
-                const wknd = dow===0||dow===6;
-                const isPast = d <= daysPassed;
-                const pct = maxDay>0 ? (h/maxDay)*100 : 0;
+                const dow=new Date(year,month,d).getDay(); const wknd=dow===0||dow===6;
+                const isPast=d<=daysPassed; const pct=maxDay>0?(h/maxDay)*100:0;
                 return (
-                  <div key={d} style={{ flex:1, display:"flex", flexDirection:"column",
-                                        alignItems:"center", justifyContent:"flex-end", gap:3, height:"100%" }}>
-                    {h>0 && <div style={{ fontSize:8, color:wknd?C.gray4:C.blue, fontWeight:500, lineHeight:1 }}>{h}</div>}
-                    <div style={{ width:"100%", borderRadius:"3px 3px 0 0",
-                                  height:`${Math.max(pct,h>0?3:0)}%`,
-                                  background: wknd ? C.gray3 : (isPast ? C.blue : C.blueMid),
-                                  transition:"height .3s" }} title={`${d}.${month+1}: ${h}h`}/>
-                    <div style={{ fontSize:8, color:wknd?C.gray3:C.gray5, marginTop:2 }}>{d}</div>
+                  <div key={d} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"flex-end", gap:2, height:"100%" }}>
+                    {h>0&&<div style={{ fontSize:7, color:wknd?C.gray4:C.blue, fontWeight:500 }}>{h}</div>}
+                    <div style={{ width:"100%", borderRadius:"2px 2px 0 0", height:`${Math.max(pct,h>0?2:0)}%`,
+                      background:wknd?C.gray3:(isPast?C.blue:C.blueMid), transition:"height .3s" }}
+                      title={`${d}.${month+1}: ${h}h`}/>
+                    <div style={{ fontSize:7, color:wknd?C.gray3:C.gray5 }}>{d}</div>
                   </div>
                 );
               })}
             </div>
-            <div style={{ display:"flex", gap:16, marginTop:8, fontSize:10, color:C.gray4 }}>
+            <div style={{ display:"flex", gap:16, marginTop:6, fontSize:10, color:C.gray4 }}>
               <span>■ <span style={{color:C.blue}}>Zrealizowane</span></span>
               <span>■ <span style={{color:C.blueMid}}>Prognozowane</span></span>
             </div>
           </div>
 
-          {/* project table with revenue */}
-          <div className="report-table-scroll" style={{ background:C.white, border:`1px solid ${C.gray3}`,
-                        borderRadius:10, overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
-            <div style={{ padding:"12px 18px", borderBottom:`1px solid ${C.gray2}`,
-                          fontSize:12, fontWeight:600, color:C.gray6 }}>
-              Zestawienie projektów
-            </div>
+          {/* Tabela projektów */}
+          <div className="report-table-scroll" style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10, overflow:"hidden" }}>
+            <div style={{ padding:"12px 18px", borderBottom:`1px solid ${C.gray2}`, fontSize:12, fontWeight:600, color:C.gray6 }}>Zestawienie projektów</div>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
               <thead>
                 <tr style={{ background:C.gray2 }}>
                   {["Projekt","Nr","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie","Stawka","Przychód","Prognoza","% UZS"].map(h=>(
-                    <th key={h} style={{ padding:"8px 10px", textAlign:h==="Projekt"?"left":"center",
-                                         fontSize:10, fontWeight:600, color:C.gray5,
-                                         borderBottom:`1px solid ${C.gray3}` }}>{h}</th>
+                    <th key={h} style={{ padding:"8px 10px", textAlign:h==="Projekt"?"left":"center", fontSize:10, fontWeight:600, color:C.gray5, borderBottom:`1px solid ${C.gray3}` }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev},ri)=>{
-                  const pct = h>0?Math.round((sH/h)*100):0;
-                  const rowBg = ri%2===0?C.white:"#F8FAFC";
+                {projRows.length===0&&(
+                  <tr><td colSpan={11} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
+                )}
+                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast},ri)=>{
+                  const pct=h>0?Math.round((sH/h)*100):0; const rowBg=ri%2===0?C.white:"#F8FAFC";
                   return (
                     <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
                       <td style={{ padding:"8px 10px", fontWeight:500, color:C.gray7 }}>{p.name}</td>
                       <td style={{ padding:"8px 10px", textAlign:"center", color:C.gray4, fontSize:11 }}>{p.number||"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"center", color:C.gray6 }}>{empCount}</td>
                       <td style={{ padding:"8px 10px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{stuCount}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{sH>0?`${Math.round(sH*100)/100}h`:"—"}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center", color:C.blue, fontWeight:500 }}>{wH>0?`${Math.round(wH*100)/100}h`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{sH>0?`${sH}h`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"center", color:C.blue, fontWeight:500 }}>{wH>0?`${wH}h`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"center", fontWeight:700, color:C.blue }}>{h}h</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center", color:rate>0?C.gray6:C.gray3, fontSize:11 }}>
-                        {rate>0?`${rate.toFixed(2)} zł`:"—"}
-                      </td>
-                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:700,
-                                   color:rev>0?"#1F7A4C":C.gray3, fontSize:12, whiteSpace:"nowrap" }}>
-                        {rev>0?`${fmt(rev)} zł`:"—"}
-                      </td>
-                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600,
-                                   color:forecast>0?"#3DAA70":C.gray3, fontSize:12, whiteSpace:"nowrap" }}>
-                        {forecast>0?`${fmt(forecast)} zł`:"—"}
-                      </td>
+                      <td style={{ padding:"8px 10px", textAlign:"center", color:rate>0?C.gray6:C.gray3, fontSize:11 }}>{rate>0?`${rate.toFixed(2)} zł`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:700, color:rev>0?"#1F7A4C":C.gray3, whiteSpace:"nowrap" }}>{rev>0?`${fmt(rev)} zł`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:forecast>0?"#3DAA70":C.gray3, whiteSpace:"nowrap" }}>{forecast>0?`${fmt(forecast)} zł`:"—"}</td>
                       <td style={{ padding:"8px 10px" }}>
                         <div style={{ display:"flex", alignItems:"center", gap:5 }}>
                           <div style={{ flex:1, height:5, background:C.gray2, borderRadius:3 }}>
@@ -1472,11 +1421,6 @@ export default function App() {
                     </tr>
                   );
                 })}
-                {projRows.length===0&&(
-                  <tr><td colSpan={10} style={{ padding:24, textAlign:"center", color:C.gray4 }}>
-                    Brak danych w tym miesiącu.
-                  </td></tr>
-                )}
                 {projRows.length>0&&(
                   <tr style={{ background:C.gray2, borderTop:`2px solid ${C.gray3}`, fontWeight:700 }}>
                     <td colSpan={2} style={{ padding:"9px 10px", color:C.gray7 }}>RAZEM</td>
@@ -1486,12 +1430,8 @@ export default function App() {
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.blue }}>{workerH}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.blue }}>{totalAllH}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
-                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#1F7A4C", fontSize:13 }}>
-                      {fmt(totalRevenue)} zł
-                    </td>
-                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:13 }}>
-                      {fmt(Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100)} zł
-                    </td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#1F7A4C", fontSize:13 }}>{fmt(totalRevenue)} zł</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:13 }}>{fmt(totalForecast)} zł</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>{stuPct}%</td>
                   </tr>
                 )}
