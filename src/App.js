@@ -261,9 +261,10 @@ export default function App() {
     return mgrProjects.filter(mp => mp.manager_id === currentManager.id).map(mp => mp.project_id);
   }, [currentManager, mgrProjects, projects]);
 
+  const myProjectIdsSet = useMemo(() => new Set(myProjectIds), [myProjectIds]);
   const myProjects = useMemo(() =>
-    projects.filter(p => myProjectIds.includes(p.id)),
-    [projects, myProjectIds]
+    projects.filter(p => myProjectIdsSet.has(p.id)),
+    [projects, myProjectIdsSet]
   );
 
   // ── TIMESHEET: pracownicy filtrowane po aktywnym projekcie ─────────────────
@@ -338,20 +339,39 @@ export default function App() {
     }, 600);
   }
 
-  function empTotal(projId, empId) {
-    let s = 0;
-    for (let d = 1; d <= days; d++) {
-      s += parseFloat(getH(projId, empId, d)) || 0;
+  // Pre-compute all totals from hoursMap in one pass — much faster than calling per cell
+  const totalsCache = useMemo(() => {
+    const empProj = {}; // empProj[projId][empId] = hours
+    const dayProj = {}; // dayProj[projId][day]   = hours
+
+    for (const [key, val] of Object.entries(hoursMap)) {
+      const [projId, empId, dateStr] = key.split("|");
+      const mk = dateStr ? dateStr.substring(0,7) : ""; // yyyy-mm
+      const currentMk = `${year}-${String(month+1).padStart(2,"0")}`;
+      if (mk !== currentMk) continue;
+
+      const h = parseFloat(val) || 0;
+      if (h <= 0) continue;
+      const day = parseInt(dateStr.substring(8,10));
+
+      if (!empProj[projId]) empProj[projId] = {};
+      empProj[projId][empId] = (empProj[projId][empId] || 0) + h;
+
+      if (!dayProj[projId]) dayProj[projId] = {};
+      dayProj[projId][day] = (dayProj[projId][day] || 0) + h;
     }
-    return Math.round(s * 100) / 100;
+    return { empProj, dayProj };
+  }, [hoursMap, year, month]);
+
+  function empTotal(projId, empId) {
+    return Math.round((totalsCache.empProj[projId]?.[empId] || 0) * 100) / 100;
   }
   function dayTotal(projId, day) {
-    const s = employees.reduce((s, e) => s + (parseFloat(getH(projId, e.id, day)) || 0), 0);
-    return Math.round(s * 100) / 100;
+    return Math.round((totalsCache.dayProj[projId]?.[day] || 0) * 100) / 100;
   }
   function projTotal(projId) {
-    const s = employees.reduce((s, e) => s + empTotal(projId, e.id), 0);
-    return Math.round(s * 100) / 100;
+    const ep = totalsCache.empProj[projId] || {};
+    return Math.round(Object.values(ep).reduce((s,v)=>s+v,0) * 100) / 100;
   }
 
   // ── Login ─────────────────────────────────────────────────────────────────
@@ -1313,6 +1333,19 @@ export default function App() {
         const daysPassed = (year===today.getFullYear()&&month===today.getMonth()) ? today.getDate() : daysTotal;
         const daysLeft   = daysTotal - daysPassed;
 
+        // Dni robocze per miesiąc (bez weekendów i świąt)
+        const WORKING_DAYS = {
+          "2026-1":22, "2026-2":20, "2026-3":20, "2026-4":21,
+          "2026-5":21, "2026-6":20, "2026-7":23, "2026-8":20,
+          "2026-9":22, "2026-10":22, "2026-11":20, "2026-12":20,
+        };
+        const workingDaysTotal  = WORKING_DAYS[`${year}-${month+1}`] || daysTotal;
+        // Ile dni roboczych już minęło (proporcjonalnie)
+        const workingDaysPassed = daysPassed >= daysTotal
+          ? workingDaysTotal
+          : Math.round((daysPassed / daysTotal) * workingDaysTotal);
+        const workingDaysLeft   = workingDaysTotal - workingDaysPassed;
+
         const studentEmps  = employees.filter(e=>e.is_student);
         const workerEmps   = employees.filter(e=>!e.is_student);
         const totalAllH    = Math.round(myProjects.reduce((s,p)=>s+projTotal(p.id),0)*100)/100;
@@ -1341,8 +1374,9 @@ export default function App() {
         }
 
         const totalRevenue = Math.round(myProjects.reduce((s,p)=>s+projRev(p),0)*100)/100;
-        const dailyAvg     = daysPassed>0 ? totalRevenue/daysPassed : 0;
-        const forecastRev  = Math.round((totalRevenue + dailyAvg*daysLeft)*100)/100;
+        // Średnia per dzień roboczy (precyzyjniejsza niż kalendarzowa)
+        const dailyAvg     = workingDaysPassed>0 ? totalRevenue/workingDaysPassed : 0;
+        const forecastRev  = Math.round((dailyAvg * workingDaysTotal)*100)/100;
 
         const dailyH = Array.from({length:daysTotal},(_,i)=>({
           d:i+1, h:Math.round(myProjects.reduce((s,p)=>s+dayTotal(p.id,i+1),0)*100)/100
@@ -1355,7 +1389,7 @@ export default function App() {
             wH: Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100,
             empCount:employees.filter(e=>empTotal(p.id,e.id)>0).length,
             stuCount:studentEmps.filter(e=>empTotal(p.id,e.id)>0).length,
-            forecast:daysPassed>0?Math.round((projRev(p)/daysPassed)*daysTotal*100)/100:0,
+            forecast:workingDaysPassed>0?Math.round((rev/workingDaysPassed)*workingDaysTotal*100)/100:0,
           }))
           .filter(r=>r.h>0)
           .sort((a,b)=>{
@@ -1419,7 +1453,7 @@ export default function App() {
                 Prognoza przychodu — cały {MONTHS[month]}
               </div>
               <div style={{ fontSize:26, fontWeight:800, color:"#3DAA70" }}>{fmt(forecastRev)} zł</div>
-              <div style={{ fontSize:11, color:C.gray4, marginTop:6 }}>Pozostało {daysLeft} dni × {fmt(dailyAvg)} zł/dzień</div>
+              <div style={{ fontSize:11, color:C.gray4, marginTop:6 }}>Pozostało {workingDaysLeft} dni rob. × {fmt(dailyAvg)} zł/dzień rob.</div>
             </div>
           </div>
 
