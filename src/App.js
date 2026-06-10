@@ -1097,14 +1097,11 @@ export default function App() {
                       return (
                         <td key={mk} style={{ padding:"5px 8px", textAlign:"center",
                                               background: isCurrent ? "#F0F7FF" : "transparent" }}>
-                          {h>0 ? (
-                            <div>
-                              <div style={{ fontWeight:600, color:isCurrent?C.blue:C.gray6, fontSize:12 }}>{h}h</div>
-                              <div style={{ height:3, background:C.gray2, borderRadius:2, marginTop:3 }}>
-                                <div style={{ height:"100%", width:`${pct}%`, background:isCurrent?C.blue:C.gray4, borderRadius:2 }}/>
-                              </div>
-                            </div>
-                          ) : <span style={{ color:C.gray3 }}>—</span>}
+                          {h>0
+                            ? <span style={{ fontWeight:600, color:isCurrent?C.blue:C.gray6, fontSize:12 }}>
+                                {Math.round(h*100)/100}h
+                              </span>
+                            : <span style={{ color:C.gray3 }}>—</span>}
                         </td>
                       );
                     })}
