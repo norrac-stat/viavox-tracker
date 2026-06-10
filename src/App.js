@@ -1291,13 +1291,14 @@ export default function App() {
         const projRows = [...myProjects]
           .map(p=>({
             p,
-            h:    projTotal(p.id),
-            sH:   studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0),
-            wH:   workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0),
+            h:        projTotal(p.id),
+            sH:       studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0),
+            wH:       workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0),
             empCount: employees.filter(e=>empTotal(p.id,e.id)>0).length,
             stuCount: studentEmps.filter(e=>empTotal(p.id,e.id)>0).length,
-            rate: rates[p.number] || 0,
-            rev:  projRevenue(p),
+            rate:     rates[p.number] || 0,
+            rev:      projRevenue(p),
+            forecast: daysPassed>0 ? Math.round((projRevenue(p)/daysPassed)*daysTotal*100)/100 : 0,
           }))
           .filter(r=>r.h>0)
           .sort((a,b)=>b.rev-a.rev);
@@ -1425,7 +1426,7 @@ export default function App() {
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
               <thead>
                 <tr style={{ background:C.gray2 }}>
-                  {["Projekt","Nr","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie","Stawka","Przychód","% UZS"].map(h=>(
+                  {["Projekt","Nr","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie","Stawka","Przychód","Prognoza","% UZS"].map(h=>(
                     <th key={h} style={{ padding:"8px 10px", textAlign:h==="Projekt"?"left":"center",
                                          fontSize:10, fontWeight:600, color:C.gray5,
                                          borderBottom:`1px solid ${C.gray3}` }}>{h}</th>
@@ -1451,6 +1452,10 @@ export default function App() {
                       <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:700,
                                    color:rev>0?"#1F7A4C":C.gray3, fontSize:12, whiteSpace:"nowrap" }}>
                         {rev>0?`${fmt(rev)} zł`:"—"}
+                      </td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600,
+                                   color:forecast>0?"#3DAA70":C.gray3, fontSize:12, whiteSpace:"nowrap" }}>
+                        {forecast>0?`${fmt(forecast)} zł`:"—"}
                       </td>
                       <td style={{ padding:"8px 10px" }}>
                         <div style={{ display:"flex", alignItems:"center", gap:5 }}>
@@ -1479,6 +1484,9 @@ export default function App() {
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#1F7A4C", fontSize:13 }}>
                       {fmt(totalRevenue)} zł
+                    </td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:13 }}>
+                      {fmt(Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100)} zł
                     </td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>{stuPct}%</td>
                   </tr>
