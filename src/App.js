@@ -732,6 +732,16 @@ export default function App() {
                   <div key={i} className={`pin-dot${i<pinInput.length?" filled":""}`} />
                 ))}
               </div>
+              {/* Klawiatura fizyczna */}
+              <input autoFocus type="password" inputMode="numeric" maxLength={4}
+                value={pinInput}
+                onChange={e => {
+                  const val = e.target.value.replace(/[^0-9]/g,"").slice(0,4);
+                  setPinInput(val);
+                  if (val.length === 4) setTimeout(() => attemptLogin(val), 150);
+                }}
+                style={{ position:"absolute", opacity:0, width:1, height:1, pointerEvents:"none" }}
+              />
               <div style={{ display:"grid", gridTemplateColumns:"repeat(3,68px)", gap:8 }}>
                 {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((k,i)=>(
                   <button key={i} className="pin-key"
