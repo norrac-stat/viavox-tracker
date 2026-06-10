@@ -347,25 +347,6 @@ export default function App() {
     setModal(null); showToast("Pracownik dodany");
   }
 
-  async function saveEditProject() {
-    if (!editProjName.trim()) return;
-    const { error } = await supabase.from("projects")
-      .update({ name: editProjName.trim(), number: editProjNum.trim() })
-      .eq("id", editingProj.id);
-    if (error) { showToast("Błąd zapisu", "err"); return; }
-    setProjects(prev => prev.map(p =>
-      p.id === editingProj.id ? { ...p, name: editProjName.trim(), number: editProjNum.trim() } : p
-    ));
-    setModal(null); showToast("Projekt zaktualizowany");
-  }
-
-  function openEditProject(p) {
-    setEditingProj(p);
-    setFProjName(p.name);
-    setFProjNumber(p.number || "");
-    setModal("editProj");
-  }
-
   async function addProject() {
     if (!fProjName.trim()) return;
     const { data, error } = await supabase.from("projects").insert({
@@ -1195,15 +1176,6 @@ export default function App() {
                     <td style={{ padding:"8px 12px", textAlign:"center", color:total>0?C.blue:C.gray3, fontWeight:600, fontSize:12 }}>{total>0?`${total}h`:"—"}</td>
                     <td style={{ padding:"8px 12px", textAlign:"center" }} onClick={e=>e.stopPropagation()}>
                       <div style={{ display:"flex", gap:4, justifyContent:"center" }}>
-                        <button className="btn-ghost" style={{ padding:"3px 8px", fontSize:11 }}
-                          onClick={e=>{
-                            e.stopPropagation();
-                            e.preventDefault();
-                            setEditingProj({...p});
-                            setEditProjName(p.name);
-                            setEditProjNum(p.number||"");
-                            setModal("editProj");
-                          }}>✎ Edytuj</button>
                         <button className="btn-danger" style={{ padding:"3px 8px", fontSize:11 }}
                           onClick={async()=>{ if(!window.confirm(`Usunąć projekt "${p.name}"?`)) return;
                             await supabase.from("projects").delete().eq("id",p.id);
@@ -1715,28 +1687,6 @@ export default function App() {
         </div>
       )}
 
-      {modal==="editProj"&&(
-        <div className="modal-bg" onClick={()=>setModal(null)}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
-            <div style={{ fontWeight:700, fontSize:18, color:C.gray7 }}>Edytuj projekt</div>
-            <div>
-              <label className="lbl">Nazwa projektu</label>
-              <input className="inp" placeholder="np. Projekt Delta" value={editProjName}
-                onChange={e=>setEditProjName(e.target.value)} />
-            </div>
-            <div>
-              <label className="lbl">Numer projektu</label>
-              <input className="inp" placeholder="np. 2024-001" value={editProjNum}
-                onChange={e=>setEditProjNum(e.target.value)}
-                onKeyDown={e=>e.key==="Enter"&&saveEditProject()} />
-            </div>
-            <div style={{ display:"flex", gap:10 }}>
-              <button className="btn" onClick={saveEditProject}>Zapisz zmiany</button>
-              <button className="btn-ghost" onClick={()=>setModal(null)}>Anuluj</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {toast&&<div className={`toast ${toast.type}`}>{toast.msg}</div>}
     </div>
