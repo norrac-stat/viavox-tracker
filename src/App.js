@@ -1195,7 +1195,7 @@ export default function App() {
                     <td style={{ padding:"8px 12px", textAlign:"center" }} onClick={e=>e.stopPropagation()}>
                       <div style={{ display:"flex", gap:4, justifyContent:"center" }}>
                         <button className="btn-ghost" style={{ padding:"3px 8px", fontSize:11 }}
-                          onClick={()=>openEditProject(p)}>✎</button>
+                          onClick={e=>{e.stopPropagation();openEditProject(p);}}>✎</button>
                         <button className="btn-danger" style={{ padding:"3px 8px", fontSize:11 }}
                           onClick={async()=>{ if(!window.confirm(`Usunąć projekt "${p.name}"?`)) return;
                             await supabase.from("projects").delete().eq("id",p.id);
