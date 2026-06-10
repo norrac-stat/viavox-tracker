@@ -1276,8 +1276,9 @@ export default function App() {
 
         // Revenue calculations
         function projRevenue(p) {
-          const rate = rates[p.number] || 0;
-          return Math.round(projTotal(p.id) * rate * 100) / 100;
+          const rate = (p && p.number && rates[p.number]) ? rates[p.number] : 0;
+          const h = projTotal(p.id) || 0;
+          return Math.round(h * rate * 100) / 100;
         }
         const totalRevenue   = Math.round(myProjects.reduce((s,p)=>s+projRevenue(p),0)*100)/100;
         const dailyAvgRev    = daysPassed > 0 ? totalRevenue / daysPassed : 0;
@@ -1288,7 +1289,7 @@ export default function App() {
           const d=i+1;
           return { d, h: myProjects.reduce((s,p)=>s+dayTotal(p.id,d),0) };
         });
-        const maxDay = Math.max(...dailyH.map(x=>x.h),1);
+        const maxDay = Math.max(1, ...dailyH.map(x=>x.h).filter(h=>h>0), 1);
 
         // project rows sorted by revenue desc
         const projRows = [...myProjects]
@@ -1306,7 +1307,7 @@ export default function App() {
           .filter(r=>r.h>0)
           .sort((a,b)=>b.rev-a.rev);
 
-        const fmt = (n) => n.toLocaleString('pl-PL', {minimumFractionDigits:2, maximumFractionDigits:2});
+        const fmt = (n) => isNaN(n)||n==null ? '0,00' : Number(n).toLocaleString('pl-PL', {minimumFractionDigits:2, maximumFractionDigits:2});
 
         return (
         <div style={{ padding:"24px 28px", maxWidth:1100 }}>
