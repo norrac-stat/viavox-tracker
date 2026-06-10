@@ -1271,13 +1271,17 @@ export default function App() {
         const maxDay = Math.max(1,...dailyH.map(x=>x.h));
 
         const projRows = [...myProjects]
-          .map(p=>({p, h:projTotal(p.id), rate:getRate(p), rev:projRev(p),
-            sH: Math.round(studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100,
-            wH: Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100,
-            empCount:employees.filter(e=>empTotal(p.id,e.id)>0).length,
-            stuCount:studentEmps.filter(e=>empTotal(p.id,e.id)>0).length,
-            forecast:workingDaysPassed>0?Math.round((rev/workingDaysPassed)*workingDaysTotal*100)/100:0,
-          }))
+          .map(p=>{
+            const h        = projTotal(p.id);
+            const rate     = getRate(p);
+            const rev      = projRev(p);
+            const sH       = Math.round(studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
+            const wH       = Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
+            const empCount = employees.filter(e=>empTotal(p.id,e.id)>0).length;
+            const stuCount = studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
+            const forecast = workingDaysPassed>0 ? Math.round((rev/workingDaysPassed)*workingDaysTotal*100)/100 : 0;
+            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast};
+          })
           .filter(r=>r.h>0)
           .sort((a,b)=>{
             const dir = sortDir==='asc' ? 1 : -1;
