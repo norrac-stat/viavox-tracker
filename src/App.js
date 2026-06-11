@@ -847,9 +847,7 @@ export default function App() {
             }
             <div style={{ display:"flex", gap:6, flexShrink:0 }}>
               <button className="btn-ghost btn-sm" onClick={exportToExcel}>⬇ Eksport Excel</button>
-              {isAdmin && (
-                <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Pracownik</button>
-              )}
+              <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Pracownik</button>
             </div>
           </div>
 
@@ -1004,7 +1002,7 @@ export default function App() {
               <input className="inp" placeholder="imię lub nazwisko…" value={empSearch}
                 onChange={e=>setEmpSearch(e.target.value)} style={{ width:190, padding:"6px 10px", fontSize:12 }} />
             </div>
-            {isAdmin&&<button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>}
+            <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>
           </div>
 
           {/* table */}
