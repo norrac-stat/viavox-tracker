@@ -1286,11 +1286,12 @@ export default function App() {
             const empCount = employees.filter(e=>empTotal(p.id,e.id)>0).length;
             const stuCount = studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
             // Prognoza per projekt: wzorzec dni tygodnia × stawka projektu
+            // Pomijamy dni z 0h (brak danych) przy liczeniu wzorca
             const pDowH = [0,0,0,0,0,0,0]; const pDowC = [0,0,0,0,0,0,0];
             for (let d=1;d<=daysPassed;d++){
               const dow=new Date(year,month,d).getDay();
-              pDowH[dow]+=dayTotal(p.id,d);
-              pDowC[dow]++;
+              const dh=dayTotal(p.id,d);
+              if(dh>0){ pDowH[dow]+=dh; pDowC[dow]++; }
             }
             const pDowAvg = pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
             let fH=0;
