@@ -1263,31 +1263,13 @@ export default function App() {
 
         const totalRevenue = Math.round(myProjects.reduce((s,p)=>s+projRev(p),0)*100)/100;
 
-        // Algorytm prognozy oparty na wzorcu dni tygodnia
-        // 1. Dla każdego dnia tygodnia (0=Nd..6=Sb) licz średnią godzin ze wszystkich projektów
-        const dowHours = [0,0,0,0,0,0,0]; // suma godzin per dzień tygodnia
-        const dowCount = [0,0,0,0,0,0,0]; // ile dni danego dnia tygodnia minęło
-        for (let d = 1; d <= daysPassed; d++) {
-          const dow = new Date(year, month, d).getDay();
-          const h = myProjects.reduce((s,p) => s + dayTotal(p.id, d), 0);
-          dowHours[dow] += h;
-          dowCount[dow]++;
-        }
-        const dowAvg = dowHours.map((h,i) => dowCount[i] > 0 ? h / dowCount[i] : 0);
+        // Algorytm prognozy: suma prognoz per projekt (każdy projekt ma swoją stawkę)
+        const avgRate = 0; // unused at global level — calculated per project below
+        const dailyAvg = workingDaysPassed > 0 ? totalRevenue / workingDaysPassed : 0;
 
-        // 2. Dla każdego pozostałego dnia miesiąca dodaj prognozę wg dnia tygodnia
-        let forecastHours = 0;
-        for (let d = daysPassed + 1; d <= daysTotal; d++) {
-          const dow = new Date(year, month, d).getDay();
-          forecastHours += dowAvg[dow];
-        }
-
-        // 3. Średnia stawka per godzinę (z aktywnych projektów)
-        const totalHoursNow = Math.max(totalAllH, 0.001);
-        const avgRate = totalRevenue > 0 ? totalRevenue / totalHoursNow : 0;
-
-        const forecastRev  = Math.round((totalRevenue + forecastHours * avgRate) * 100) / 100;
-        const dailyAvg     = workingDaysPassed > 0 ? totalRevenue / workingDaysPassed : 0;
+        // forecastRev będzie sumą prognoz per projekt (obliczane po projRows)
+        // placeholder — nadpisany poniżej
+        let forecastRev = 0;
 
         const dailyH = Array.from({length:daysTotal},(_,i)=>({
           d:i+1, h:Math.round(myProjects.reduce((s,p)=>s+dayTotal(p.id,i+1),0)*100)/100
@@ -1303,13 +1285,20 @@ export default function App() {
             const wH       = Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
             const empCount = employees.filter(e=>empTotal(p.id,e.id)>0).length;
             const stuCount = studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
-            // Prognoza per projekt wg wzorca dni tygodnia
+            // Prognoza per projekt: wzorzec dni tygodnia × stawka projektu
             const pDowH = [0,0,0,0,0,0,0]; const pDowC = [0,0,0,0,0,0,0];
-            for (let d=1;d<=daysPassed;d++){const dow=new Date(year,month,d).getDay();pDowH[dow]+=dayTotal(p.id,d);pDowC[dow]++;}
+            for (let d=1;d<=daysPassed;d++){
+              const dow=new Date(year,month,d).getDay();
+              pDowH[dow]+=dayTotal(p.id,d);
+              pDowC[dow]++;
+            }
             const pDowAvg = pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
-            let fH=0; for(let d=daysPassed+1;d<=daysTotal;d++){fH+=pDowAvg[new Date(year,month,d).getDay()];}
-            const pAvgRate = h>0 && rate>0 ? rate : avgRate;
-            const forecast = Math.round((rev + fH * pAvgRate)*100)/100;
+            let fH=0;
+            for(let d=daysPassed+1;d<=daysTotal;d++){
+              fH+=pDowAvg[new Date(year,month,d).getDay()];
+            }
+            // prognoza = przychód do teraz + prognozowane godziny × stawka projektu
+            const forecast = rate>0 ? Math.round((rev + fH*rate)*100)/100 : 0;
             return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast};
           })
           .filter(r=>r.h>0)
@@ -1331,6 +1320,7 @@ export default function App() {
           });
 
         const totalForecast = Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100;
+        forecastRev = totalForecast;
 
         return (
         <div style={{ padding:"24px 28px", maxWidth:1100 }}>
