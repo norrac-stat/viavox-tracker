@@ -567,10 +567,47 @@ export default function App() {
 
 
 
-  // ── Export do Excel ──────────────────────────────────────────────────────
+  // ── Export ────────────────────────────────────────────────────────────────
+  function exportToCSV() {
+    const monthName = MONTHS[month];
+    const numDays   = daysInMonth(year, month);
+    const rows      = [["Nazwisko","Imię","Projekt","Nr","Data","Godziny"]];
+
+    myProjects.forEach(proj => {
+      employees.forEach(emp => {
+        for (let d = 1; d <= numDays; d++) {
+          const key = `${proj.id}|${emp.id}|${toDateStr(year, month, d)}`;
+          const h = parseFloat(hoursMap[key]) || 0;
+          if (h > 0) {
+            rows.push([
+              emp.last_name, emp.first_name,
+              proj.name, proj.number || "",
+              toDateStr(year, month, d), h
+            ]);
+          }
+        }
+      });
+    });
+
+    if (rows.length <= 1) { showToast("Brak danych do eksportu", "err"); return; }
+
+    const csvLines = rows.map(r => r.map(v => {
+      const s = String(v);
+      if (s.includes(",") || s.includes("\n")) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    }).join(","));
+    const csv = csvLines.join("\r\n");
+        const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = `VIAVOX_${monthName}_${year}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast(`Pobrano: VIAVOX_${monthName}_${year}.csv (${rows.length-1} wierszy)`);
+  }
+
   function exportToExcel() {
     const XLSX = window.XLSX;
-    if (!XLSX) { showToast("Błąd: biblioteka XLSX niedostępna", "err"); return; }
+    if (!XLSX) { exportToCSV(); return; } // fallback to CSV if XLSX not loaded
 
     const monthName = MONTHS[month];
     const numDays   = daysInMonth(year, month);
@@ -581,16 +618,13 @@ export default function App() {
       const projEmps = employees.filter(e => (ep[e.id] || 0) > 0);
       if (projEmps.length === 0) return;
 
-      // Header
       const header = ["Nazwisko", "Imię", "Nr UK", "Student",
         ...Array.from({length: numDays}, (_, i) =>
           `${i+1}.${String(month+1).padStart(2,"0")}.${year}`),
         "SUMA"
       ];
-
       const rows = [header];
 
-      // Data rows
       projEmps.forEach(emp => {
         const vals = [];
         let suma = 0;
@@ -600,15 +634,11 @@ export default function App() {
           vals.push(h > 0 ? h : 0);
           suma += h;
         }
-        rows.push([
-          emp.last_name, emp.first_name, emp.uk_number || "",
-          emp.is_student ? "TAK" : "NIE",
-          ...vals,
-          Math.round(suma * 100) / 100
-        ]);
+        rows.push([emp.last_name, emp.first_name, emp.uk_number || "",
+          emp.is_student ? "TAK" : "NIE", ...vals,
+          Math.round(suma * 100) / 100]);
       });
 
-      // Totals row
       const totals = ["SUMA DZIENNA", "", "", ""];
       let grandTotal = 0;
       for (let d = 1; d <= numDays; d++) {
@@ -617,25 +647,19 @@ export default function App() {
           return s + (parseFloat(hoursMap[key]) || 0);
         }, 0);
         const rounded = Math.round(t * 100) / 100;
-        totals.push(rounded);
-        grandTotal += rounded;
+        totals.push(rounded); grandTotal += rounded;
       }
       totals.push(Math.round(grandTotal * 100) / 100);
       rows.push(totals);
 
       const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws['!cols'] = [
-        {wch:18}, {wch:14}, {wch:12}, {wch:8},
-        ...Array(numDays).fill({wch:5}),
-        {wch:8}
-      ];
-      const sheetName = ((proj.number ? `[${proj.number}] ` : '') + proj.name).substring(0, 31);
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      ws['!cols'] = [{wch:18},{wch:14},{wch:12},{wch:8},
+        ...Array(numDays).fill({wch:5}),{wch:8}];
+      XLSX.utils.book_append_sheet(wb, ws,
+        ((proj.number ? `[${proj.number}] ` : '') + proj.name).substring(0,31));
     });
 
-    if (wb.SheetNames.length === 0) {
-      showToast("Brak danych do eksportu", "err"); return;
-    }
+    if (wb.SheetNames.length === 0) { showToast("Brak danych do eksportu","err"); return; }
     XLSX.writeFile(wb, `VIAVOX_${monthName}_${year}.xlsx`);
     showToast(`Pobrano: VIAVOX_${monthName}_${year}.xlsx`);
   }
@@ -846,7 +870,8 @@ export default function App() {
                 </>)
             }
             <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-              <button className="btn-ghost btn-sm" onClick={exportToExcel}>⬇ Eksport Excel</button>
+              <button className="btn-ghost btn-sm" onClick={exportToExcel}>⬇ Excel</button>
+              <button className="btn-ghost btn-sm" onClick={exportToCSV}>⬇ CSV</button>
               <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Pracownik</button>
             </div>
           </div>
@@ -1285,20 +1310,33 @@ export default function App() {
             const stuCount = studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
             // Prognoza per projekt: wzorzec dni tygodnia × stawka projektu
             // Pomijamy dni z 0h (brak danych) przy liczeniu wzorca
-            const pDowH = [0,0,0,0,0,0,0]; const pDowC = [0,0,0,0,0,0,0];
+            const pDowH  = [0,0,0,0,0,0,0]; const pDowC  = [0,0,0,0,0,0,0];
+            const pDowSH = [0,0,0,0,0,0,0]; const pDowSC = [0,0,0,0,0,0,0];
+            const pDowWH = [0,0,0,0,0,0,0]; const pDowWC = [0,0,0,0,0,0,0];
             for (let d=1;d<=daysPassed;d++){
               const dow=new Date(year,month,d).getDay();
               const dh=dayTotal(p.id,d);
               if(dh>0){ pDowH[dow]+=dh; pDowC[dow]++; }
+              const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
+              if(dsh>0){ pDowSH[dow]+=dsh; pDowSC[dow]++; }
+              const dwh=workerEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
+              if(dwh>0){ pDowWH[dow]+=dwh; pDowWC[dow]++; }
             }
-            const pDowAvg = pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
-            let fH=0;
+            const pDowAvg  = pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
+            const pDowAvgS = pDowSH.map((hh,i)=>pDowSC[i]>0?hh/pDowSC[i]:0);
+            const pDowAvgW = pDowWH.map((hh,i)=>pDowWC[i]>0?hh/pDowWC[i]:0);
+            let fH=0, fSH=0, fWH=0;
             for(let d=daysPassed+1;d<=daysTotal;d++){
-              fH+=pDowAvg[new Date(year,month,d).getDay()];
+              const dow=new Date(year,month,d).getDay();
+              fH  += pDowAvg[dow];
+              fSH += pDowAvgS[dow];
+              fWH += pDowAvgW[dow];
             }
-            // prognoza = przychód do teraz + prognozowane godziny × stawka projektu
+            fH  = Math.round(fH*100)/100;
+            fSH = Math.round(fSH*100)/100;
+            fWH = Math.round(fWH*100)/100;
             const forecast = rate>0 ? Math.round((rev + fH*rate)*100)/100 : 0;
-            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast};
+            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH};
           })
           .filter(r=>r.h>0)
           .sort((a,b)=>{
@@ -1330,7 +1368,10 @@ export default function App() {
             <span style={{ color:C.blue, fontWeight:600, fontSize:15 }}>{MONTHS[month]} {year}</span>
             <button className="btn-ghost" onClick={nextMonth} style={{ padding:"5px 10px", fontSize:14 }}>›</button>
             <span style={{ fontSize:11, color:C.gray4 }}>Dzień {daysPassed}/{daysTotal} — pozostało {daysLeft} dni</span>
-            <button className="btn-ghost btn-sm" style={{ marginLeft:"auto" }} onClick={exportToExcel}>⬇ Eksport Excel</button>
+            <div style={{ display:"flex", gap:6, marginLeft:"auto" }}>
+              <button className="btn-ghost btn-sm" onClick={exportToExcel}>⬇ Excel</button>
+              <button className="btn-ghost btn-sm" onClick={exportToCSV}>⬇ CSV</button>
+            </div>
           </div>
 
           {/* KPI godziny */}
@@ -1412,17 +1453,20 @@ export default function App() {
               <thead>
                 <tr style={{ background:C.gray2 }}>
                   {[
-                    {label:"Projekt",    col:"name"},
-                    {label:"Nr",         col:"number"},
-                    {label:"Prac.",      col:"empCount"},
-                    {label:"UZS",        col:"stuCount"},
-                    {label:"Godz. UZS",  col:"sH"},
-                    {label:"Godz. UZSO", col:"wH"},
-                    {label:"Łącznie",    col:"h"},
-                    {label:"Stawka",     col:"rate"},
-                    {label:"Przychód",   col:"rev"},
-                    {label:"Prognoza",   col:"forecast"},
-                    {label:"% UZS",      col:"pct"},
+                    {label:"Projekt",       col:"name"},
+                    {label:"Nr",            col:"number"},
+                    {label:"Prac.",         col:"empCount"},
+                    {label:"UZS",           col:"stuCount"},
+                    {label:"Godz. UZS",     col:"sH"},
+                    {label:"Godz. UZSO",    col:"wH"},
+                    {label:"Łącznie",       col:"h"},
+                    {label:"Stawka",        col:"rate"},
+                    {label:"Przychód",      col:"rev"},
+                    {label:"Prognoza",      col:"forecast"},
+                    {label:"Prog. UZS h",   col:"fSH"},
+                    {label:"Prog. UZSO h",  col:"fWH"},
+                    {label:"Prog. Total h", col:"fH"},
+                    {label:"% UZS",         col:"pct"},
                   ].map(({label,col})=>(
                     <th key={col} onClick={()=>toggleSort(col)}
                       style={{ padding:"8px 10px", textAlign:label==="Projekt"?"left":"center",
@@ -1453,6 +1497,9 @@ export default function App() {
                       <td style={{ padding:"8px 10px", textAlign:"center", color:rate>0?C.gray6:C.gray3, fontSize:11 }}>{rate>0?`${rate.toFixed(2)} zł`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:700, color:rev>0?"#1F7A4C":C.gray3, whiteSpace:"nowrap" }}>{rev>0?`${fmt(rev)} zł`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:forecast>0?"#3DAA70":C.gray3, whiteSpace:"nowrap" }}>{forecast>0?`${fmt(forecast)} zł`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", color:"#3DAA70", fontSize:11 }}>{fSH>0?`${Math.round((sH+fSH)*100)/100}h`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", color:C.blue, fontSize:11 }}>{fWH>0?`${Math.round((wH+fWH)*100)/100}h`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:11 }}>{fH>0?`${Math.round((h+fH)*100)/100}h`:"—"}</td>
                       <td style={{ padding:"8px 10px" }}>
                         <div style={{ display:"flex", alignItems:"center", gap:5 }}>
                           <div style={{ flex:1, height:5, background:C.gray2, borderRadius:3 }}>
@@ -1475,6 +1522,9 @@ export default function App() {
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#1F7A4C", fontSize:13 }}>{fmt(totalRevenue)} zł</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:13 }}>{fmt(totalForecast)} zł</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.sH+(r.fSH||0),0)*100)/100}h</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:C.blue, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.wH+(r.fWH||0),0)*100)/100}h</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.h+(r.fH||0),0)*100)/100}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>{stuPct}%</td>
                   </tr>
                 )}
