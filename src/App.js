@@ -1360,7 +1360,7 @@ export default function App() {
         forecastRev = totalForecast;
 
         return (
-        <div style={{ padding:"24px 28px", maxWidth:1100 }}>
+        <div style={{ padding:"24px 28px", maxWidth:"100%" }}>
           {/* header */}
           <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20, flexWrap:"wrap" }}>
             <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Raport</div>
@@ -1449,12 +1449,12 @@ export default function App() {
           {/* Tabela projektów */}
           <div className="report-table-scroll" style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10, overflow:"hidden" }}>
             <div style={{ padding:"12px 18px", borderBottom:`1px solid ${C.gray2}`, fontSize:12, fontWeight:600, color:C.gray6 }}>Zestawienie projektów</div>
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+            <table style={{ width:"100%", minWidth:1300, borderCollapse:"collapse", fontSize:12 }}>
               <thead>
                 <tr style={{ background:C.gray2 }}>
                   {[
-                    {label:"Projekt",       col:"name"},
                     {label:"Nr",            col:"number"},
+                    {label:"Projekt",       col:"name"},
                     {label:"Prac.",         col:"empCount"},
                     {label:"UZS",           col:"stuCount"},
                     {label:"Godz. UZS",     col:"sH"},
@@ -1469,10 +1469,12 @@ export default function App() {
                     {label:"% UZS",         col:"pct"},
                   ].map(({label,col})=>(
                     <th key={col} onClick={()=>toggleSort(col)}
-                      style={{ padding:"8px 10px", textAlign:label==="Projekt"?"left":"center",
-                               fontSize:10, fontWeight:600, color:sortCol===col?C.blue:C.gray5,
-                               borderBottom:`1px solid ${C.gray3}`, cursor:"pointer",
-                               userSelect:"none", whiteSpace:"nowrap",
+                      style={{ padding:"8px 10px",
+                               textAlign:label==="Projekt"?"left":"center",
+                               fontSize:10, fontWeight:600,
+                               color:sortCol===col?C.blue:C.gray5,
+                               borderBottom:`1px solid ${C.gray3}`,
+                               cursor:"pointer", userSelect:"none", whiteSpace:"nowrap",
                                background:sortCol===col?C.blueLight:C.gray2 }}>
                       {label}{sortArrow(col)}
                     </th>
@@ -1487,8 +1489,8 @@ export default function App() {
                   const pct=h>0?Math.round((sH/h)*100):0; const rowBg=ri%2===0?C.white:"#F8FAFC";
                   return (
                     <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
-                      <td style={{ padding:"8px 10px", fontWeight:500, color:C.gray7 }}>{p.name}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center", color:C.gray4, fontSize:11 }}>{p.number||"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"center", color:C.gray4, fontSize:11, whiteSpace:"nowrap" }}>{p.number||"—"}</td>
+                      <td style={{ padding:"8px 10px", fontWeight:500, color:C.gray7, minWidth:140 }}>{p.name}</td>
                       <td style={{ padding:"8px 10px", textAlign:"center", color:C.gray6 }}>{empCount}</td>
                       <td style={{ padding:"8px 10px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{stuCount}</td>
                       <td style={{ padding:"8px 10px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{sH>0?`${sH}h`:"—"}</td>
@@ -1513,7 +1515,8 @@ export default function App() {
                 })}
                 {projRows.length>0&&(
                   <tr style={{ background:C.gray2, borderTop:`2px solid ${C.gray3}`, fontWeight:700 }}>
-                    <td colSpan={2} style={{ padding:"9px 10px", color:C.gray7 }}>RAZEM</td>
+                    <td style={{ padding:"9px 10px", color:C.gray5 }}>—</td>
+                    <td style={{ padding:"9px 10px", color:C.gray7, fontWeight:700 }}>RAZEM</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray6 }}>{activeEmps.length}</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:"#3DAA70" }}>{activeStudents}</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:"#3DAA70" }}>{studentH}h</td>
