@@ -1481,9 +1481,9 @@ export default function App() {
               </thead>
               <tbody>
                 {projRows.length===0&&(
-                  <tr><td colSpan={11} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
+                  <tr><td colSpan={14} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
                 )}
-                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast},ri)=>{
+                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH},ri)=>{
                   const pct=h>0?Math.round((sH/h)*100):0; const rowBg=ri%2===0?C.white:"#F8FAFC";
                   return (
                     <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
