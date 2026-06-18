@@ -597,7 +597,8 @@ export default function App() {
       return s;
     }).join(","));
     const csv = csvLines.join("\r\n");
-        const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
+        const bom = "\uFEFF";
+    const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href = url; a.download = `VIAVOX_${monthName}_${year}.csv`;
@@ -656,7 +657,9 @@ export default function App() {
       ws['!cols'] = [{wch:18},{wch:14},{wch:12},{wch:8},
         ...Array(numDays).fill({wch:5}),{wch:8}];
       XLSX.utils.book_append_sheet(wb, ws,
-        ((proj.number ? `[${proj.number}] ` : '') + proj.name).substring(0,31));
+        ((proj.number ? `[${proj.number}] ` : '') + proj.name)
+          .replace(/[:\\\/?*[\]]/g, '')
+          .substring(0, 31));
     });
 
     if (wb.SheetNames.length === 0) { showToast("Brak danych do eksportu","err"); return; }
