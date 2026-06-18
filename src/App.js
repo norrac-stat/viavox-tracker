@@ -667,6 +667,234 @@ export default function App() {
     showToast(`Pobrano: VIAVOX_${monthName}_${year}.xlsx`);
   }
 
+  // ── Export Raport (tabela projektów) ─────────────────────────────────────
+  function exportReportToExcel() {
+    const XLSX = window.XLSX;
+    if (!XLSX) { exportReportToCSV(); return; }
+
+    const monthName = MONTHS[month];
+    const today     = new Date();
+    const daysTotal = daysInMonth(year, month);
+    const daysPassed = (year===today.getFullYear()&&month===today.getMonth()) ? today.getDate() : daysTotal;
+
+    const studentEmps = employees.filter(e=>e.is_student);
+    const workerEmps  = employees.filter(e=>!e.is_student);
+    const getRate = (p) => (p&&p.number&&rates&&rates[p.number]) ? Number(rates[p.number]) : 0;
+    const projRev = (p) => Math.round(projTotal(p.id)*getRate(p)*100)/100;
+
+    // Buduj projRows tak samo jak w widoku raportu
+    const projRows = [...myProjects]
+      .map(p => {
+        const h        = projTotal(p.id);
+        const rate     = getRate(p);
+        const rev      = projRev(p);
+        const sH       = Math.round(studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
+        const wH       = Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
+        const empCount = employees.filter(e=>empTotal(p.id,e.id)>0).length;
+        const stuCount = studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
+        const pDowH=[0,0,0,0,0,0,0],pDowC=[0,0,0,0,0,0,0];
+        const pDowSH=[0,0,0,0,0,0,0],pDowSC=[0,0,0,0,0,0,0];
+        const pDowWH=[0,0,0,0,0,0,0],pDowWC=[0,0,0,0,0,0,0];
+        for(let d=1;d<=daysPassed;d++){
+          const dow=new Date(year,month,d).getDay();
+          const dh=dayTotal(p.id,d);
+          if(dh>0){pDowH[dow]+=dh;pDowC[dow]++;}
+          const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
+          if(dsh>0){pDowSH[dow]+=dsh;pDowSC[dow]++;}
+          const dwh=workerEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
+          if(dwh>0){pDowWH[dow]+=dwh;pDowWC[dow]++;}
+        }
+        const pDowAvg =pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
+        const pDowAvgS=pDowSH.map((hh,i)=>pDowSC[i]>0?hh/pDowSC[i]:0);
+        const pDowAvgW=pDowWH.map((hh,i)=>pDowWC[i]>0?hh/pDowWC[i]:0);
+        let fH=0,fSH=0,fWH=0;
+        for(let d=daysPassed+1;d<=daysTotal;d++){
+          const dow=new Date(year,month,d).getDay();
+          fH+=pDowAvg[dow]; fSH+=pDowAvgS[dow]; fWH+=pDowAvgW[dow];
+        }
+        fH=Math.round(fH*100)/100; fSH=Math.round(fSH*100)/100; fWH=Math.round(fWH*100)/100;
+        const forecast=rate>0?Math.round((rev+fH*rate)*100)/100:0;
+        return {p,h,rate,rev,sH,wH,empCount,stuCount,forecast,fSH,fWH,fH};
+      })
+      .filter(r=>r.h>0)
+      .sort((a,b)=>b.rev-a.rev);
+
+    if (projRows.length===0) { showToast("Brak danych do eksportu","err"); return; }
+
+    const wb = XLSX.utils.book_new();
+    const fmt2 = (n) => Math.round(Number(n)*100)/100;
+
+    // Arkusz 1: Zestawienie projektów
+    const header = [
+      "Nr","Projekt","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie",
+      "Stawka (zł)","Przychód (zł)","Prognoza (zł)",
+      "Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS"
+    ];
+    const dataRows = projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH})=>([
+      p.number||"",
+      p.name,
+      empCount,
+      stuCount,
+      fmt2(sH),
+      fmt2(wH),
+      fmt2(h),
+      rate>0?fmt2(rate):"",
+      rev>0?fmt2(rev):"",
+      forecast>0?fmt2(forecast):"",
+      sH+fSH>0?fmt2(sH+fSH):"",
+      wH+fWH>0?fmt2(wH+fWH):"",
+      h+fH>0?fmt2(h+fH):"",
+      h>0?Math.round((sH/h)*100):0,
+    ]));
+
+    // Wiersz RAZEM
+    const totalH    = fmt2(projRows.reduce((s,r)=>s+r.h,0));
+    const totalSH   = fmt2(projRows.reduce((s,r)=>s+r.sH,0));
+    const totalWH   = fmt2(projRows.reduce((s,r)=>s+r.wH,0));
+    const totalRev  = fmt2(projRows.reduce((s,r)=>s+r.rev,0));
+    const totalFc   = fmt2(projRows.reduce((s,r)=>s+r.forecast,0));
+    const totalPSH  = fmt2(projRows.reduce((s,r)=>s+r.sH+r.fSH,0));
+    const totalPWH  = fmt2(projRows.reduce((s,r)=>s+r.wH+r.fWH,0));
+    const totalPH   = fmt2(projRows.reduce((s,r)=>s+r.h+r.fH,0));
+    const stuPct    = totalH>0?Math.round((totalSH/totalH)*100):0;
+    const activeEmpCount = employees.filter(e=>myProjects.some(p=>empTotal(p.id,e.id)>0)).length;
+    const activeStuCount = employees.filter(e=>e.is_student&&myProjects.some(p=>empTotal(p.id,e.id)>0)).length;
+
+    const sumRow = [
+      "","RAZEM",activeEmpCount,activeStuCount,
+      totalSH,totalWH,totalH,"",totalRev,totalFc,
+      totalPSH,totalPWH,totalPH,stuPct
+    ];
+
+    const ws1 = XLSX.utils.aoa_to_sheet([header, ...dataRows, sumRow]);
+    ws1['!cols'] = [
+      {wch:8},{wch:28},{wch:7},{wch:7},{wch:11},{wch:12},{wch:10},
+      {wch:13},{wch:14},{wch:14},{wch:12},{wch:13},{wch:13},{wch:8}
+    ];
+    XLSX.utils.book_append_sheet(wb, ws1, `Raport ${monthName} ${year}`.substring(0,31));
+
+    // Arkusz 2: KPI podsumowanie
+    const totalAllH = fmt2(myProjects.reduce((s,p)=>s+projTotal(p.id),0));
+    const studentH  = fmt2(myProjects.reduce((s,p)=>s+studentEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0));
+    const workerH   = fmt2(myProjects.reduce((s,p)=>s+workerEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0));
+
+    const WORKING_DAYS = {
+      "2026-1":22,"2026-2":20,"2026-3":20,"2026-4":21,
+      "2026-5":21,"2026-6":20,"2026-7":23,"2026-8":20,
+      "2026-9":22,"2026-10":22,"2026-11":20,"2026-12":20,
+    };
+    const workingDaysTotal  = WORKING_DAYS[`${year}-${month+1}`]||daysTotal;
+    const workingDaysPassed = daysPassed>=daysTotal
+      ? workingDaysTotal
+      : Math.round((daysPassed/daysTotal)*workingDaysTotal);
+    const dailyAvg = workingDaysPassed>0 ? fmt2(totalRev/workingDaysPassed) : 0;
+
+    const ws2 = XLSX.utils.aoa_to_sheet([
+      [`Raport miesięczny — ${monthName} ${year}`],
+      [],
+      ["Wskaźnik","Wartość"],
+      ["Miesiąc",`${monthName} ${year}`],
+      ["Dzień raportu",`${daysPassed}/${daysTotal}`],
+      ["Aktywne projekty",projRows.length],
+      ["Aktywni pracownicy",activeEmpCount],
+      ["w tym UZS (studenci)",activeStuCount],
+      [],
+      ["Godziny łącznie",totalAllH],
+      ["Godziny UZS",studentH],
+      ["Godziny UZSO",workerH],
+      ["% UZS",`${totalH>0?Math.round((studentH/totalH)*100):0}%`],
+      [],
+      ["Przychód (do teraz)",totalRev],
+      ["Śr. dzienna przychód",dailyAvg],
+      ["Prognoza przychodu (cały miesiąc)",totalFc],
+      ["Prognoza godzin łącznie",totalPH],
+    ]);
+    ws2['!cols'] = [{wch:36},{wch:20}];
+    XLSX.utils.book_append_sheet(wb, ws2, "KPI");
+
+    XLSX.writeFile(wb, `VIAVOX_Raport_${monthName}_${year}.xlsx`);
+    showToast(`Pobrano: VIAVOX_Raport_${monthName}_${year}.xlsx`);
+  }
+
+  function exportReportToCSV() {
+    const monthName = MONTHS[month];
+    const today     = new Date();
+    const daysTotal = daysInMonth(year, month);
+    const daysPassed = (year===today.getFullYear()&&month===today.getMonth()) ? today.getDate() : daysTotal;
+
+    const studentEmps = employees.filter(e=>e.is_student);
+    const workerEmps  = employees.filter(e=>!e.is_student);
+    const getRate = (p) => (p&&p.number&&rates&&rates[p.number]) ? Number(rates[p.number]) : 0;
+    const projRev = (p) => Math.round(projTotal(p.id)*getRate(p)*100)/100;
+
+    const projRows = [...myProjects]
+      .map(p => {
+        const h        = projTotal(p.id);
+        const rate     = getRate(p);
+        const rev      = projRev(p);
+        const sH       = Math.round(studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
+        const wH       = Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
+        const empCount = employees.filter(e=>empTotal(p.id,e.id)>0).length;
+        const stuCount = studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
+        const pDowH=[0,0,0,0,0,0,0],pDowC=[0,0,0,0,0,0,0];
+        const pDowSH=[0,0,0,0,0,0,0],pDowSC=[0,0,0,0,0,0,0];
+        const pDowWH=[0,0,0,0,0,0,0],pDowWC=[0,0,0,0,0,0,0];
+        for(let d=1;d<=daysPassed;d++){
+          const dow=new Date(year,month,d).getDay();
+          const dh=dayTotal(p.id,d);
+          if(dh>0){pDowH[dow]+=dh;pDowC[dow]++;}
+          const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
+          if(dsh>0){pDowSH[dow]+=dsh;pDowSC[dow]++;}
+          const dwh=workerEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
+          if(dwh>0){pDowWH[dow]+=dwh;pDowWC[dow]++;}
+        }
+        const pDowAvg =pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
+        let fH=0,fSH=0,fWH=0;
+        for(let d=daysPassed+1;d<=daysTotal;d++){
+          const dow=new Date(year,month,d).getDay();
+          fH+=pDowAvg[dow];
+          fSH+=pDowSH.map((hh,i)=>pDowSC[i]>0?hh/pDowSC[i]:0)[dow];
+          fWH+=pDowWH.map((hh,i)=>pDowWC[i]>0?hh/pDowWC[i]:0)[dow];
+        }
+        fH=Math.round(fH*100)/100; fSH=Math.round(fSH*100)/100; fWH=Math.round(fWH*100)/100;
+        const forecast=rate>0?Math.round((rev+fH*rate)*100)/100:0;
+        return {p,h,rate,rev,sH,wH,empCount,stuCount,forecast,fSH,fWH,fH};
+      })
+      .filter(r=>r.h>0)
+      .sort((a,b)=>b.rev-a.rev);
+
+    if (projRows.length===0) { showToast("Brak danych do eksportu","err"); return; }
+
+    const rows = [
+      ["Nr","Projekt","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie",
+       "Stawka","Przychód","Prognoza","Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS"],
+      ...projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH})=>[
+        p.number||"", p.name, empCount, stuCount,
+        sH, wH, h,
+        rate>0?rate:"",
+        rev>0?rev:"",
+        forecast>0?forecast:"",
+        sH+fSH>0?Math.round((sH+fSH)*100)/100:"",
+        wH+fWH>0?Math.round((wH+fWH)*100)/100:"",
+        h+fH>0?Math.round((h+fH)*100)/100:"",
+        h>0?`${Math.round((sH/h)*100)}%`:"",
+      ])
+    ];
+
+    const bom = "\uFEFF";
+    const csv = rows.map(r=>r.map(v=>{
+      const s=String(v);
+      if(s.includes(",")||s.includes("\n")) return '"'+s.replace(/"/g,'""')+'"';
+      return s;
+    }).join(",")).join("\r\n");
+    const blob = new Blob([bom+csv],{type:"text/csv;charset=utf-8;"});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href=url; a.download=`VIAVOX_Raport_${monthName}_${year}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast(`Pobrano: VIAVOX_Raport_${monthName}_${year}.csv`);
+  }
+
   function prevMonth() { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); }
   function nextMonth() { if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); }
 
@@ -1372,8 +1600,8 @@ export default function App() {
             <button className="btn-ghost" onClick={nextMonth} style={{ padding:"5px 10px", fontSize:14 }}>›</button>
             <span style={{ fontSize:11, color:C.gray4 }}>Dzień {daysPassed}/{daysTotal} — pozostało {daysLeft} dni</span>
             <div style={{ display:"flex", gap:6, marginLeft:"auto" }}>
-              <button className="btn-ghost btn-sm" onClick={exportToExcel}>⬇ Excel</button>
-              <button className="btn-ghost btn-sm" onClick={exportToCSV}>⬇ CSV</button>
+              <button className="btn-ghost btn-sm" onClick={exportReportToExcel}>⬇ Excel</button>
+              <button className="btn-ghost btn-sm" onClick={exportReportToCSV}>⬇ CSV</button>
             </div>
           </div>
 
