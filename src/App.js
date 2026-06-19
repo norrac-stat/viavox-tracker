@@ -134,10 +134,12 @@ export default function App() {
   const [projects,   setProjects]   = useState([]);
   const [mgrProjects,setMgrProjects]= useState([]); // manager_projects rows
   const [hoursMap,   setHoursMap]   = useState({}); // key: projId|empId|date → hours value
+  const [akordMap,   setAkordMap]   = useState({}); // key: projId|empId|date → kartony
 
   const [loading,    setLoading]    = useState(true);
   const [saving,     setSaving]     = useState(false);
   const saveTimer = useRef({});
+  const saveTimerAkord = useRef({});
 
   const now = new Date();
   const [year,  setYear]  = useState(now.getFullYear());
@@ -395,7 +397,7 @@ export default function App() {
   }
   function logout() {
     setCurrentManager(null); setPinInput(""); setSelMgrId("");
-    setLoginError(""); setTab("timesheet"); setHoursMap({});
+    setLoginError(""); setTab("timesheet"); setHoursMap({}); setAkordMap({});
     try { sessionStorage.removeItem("vv_manager"); } catch {}
   }
 
@@ -597,7 +599,7 @@ export default function App() {
       return s;
     }).join(","));
     const csv = csvLines.join("\r\n");
-        const bom = "\uFEFF";
+    const bom = "\uFEFF";
     const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
@@ -658,7 +660,7 @@ export default function App() {
         ...Array(numDays).fill({wch:5}),{wch:8}];
       XLSX.utils.book_append_sheet(wb, ws,
         ((proj.number ? `[${proj.number}] ` : '') + proj.name)
-          .replace(/[:\\\/?*[\]]/g, '')
+          .replace(/[:\\\/\?\*\[\]]/g, '')
           .substring(0, 31));
     });
 
@@ -667,232 +669,298 @@ export default function App() {
     showToast(`Pobrano: VIAVOX_${monthName}_${year}.xlsx`);
   }
 
+
   // ── Export Raport (tabela projektów) ─────────────────────────────────────
   function exportReportToExcel() {
     const XLSX = window.XLSX;
     if (!XLSX) { exportReportToCSV(); return; }
-
     const monthName = MONTHS[month];
     const today     = new Date();
     const daysTotal = daysInMonth(year, month);
     const daysPassed = (year===today.getFullYear()&&month===today.getMonth()) ? today.getDate() : daysTotal;
-
     const studentEmps = employees.filter(e=>e.is_student);
     const workerEmps  = employees.filter(e=>!e.is_student);
     const getRate = (p) => (p&&p.number&&rates&&rates[p.number]) ? Number(rates[p.number]) : 0;
     const projRev = (p) => Math.round(projTotal(p.id)*getRate(p)*100)/100;
-
-    // Buduj projRows tak samo jak w widoku raportu
-    const projRows = [...myProjects]
-      .map(p => {
-        const h        = projTotal(p.id);
-        const rate     = getRate(p);
-        const rev      = projRev(p);
-        const sH       = Math.round(studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
-        const wH       = Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
-        const empCount = employees.filter(e=>empTotal(p.id,e.id)>0).length;
-        const stuCount = studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
-        const pDowH=[0,0,0,0,0,0,0],pDowC=[0,0,0,0,0,0,0];
-        const pDowSH=[0,0,0,0,0,0,0],pDowSC=[0,0,0,0,0,0,0];
-        const pDowWH=[0,0,0,0,0,0,0],pDowWC=[0,0,0,0,0,0,0];
-        for(let d=1;d<=daysPassed;d++){
-          const dow=new Date(year,month,d).getDay();
-          const dh=dayTotal(p.id,d);
-          if(dh>0){pDowH[dow]+=dh;pDowC[dow]++;}
-          const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
-          if(dsh>0){pDowSH[dow]+=dsh;pDowSC[dow]++;}
-          const dwh=workerEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
-          if(dwh>0){pDowWH[dow]+=dwh;pDowWC[dow]++;}
-        }
-        const pDowAvg =pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
-        const pDowAvgS=pDowSH.map((hh,i)=>pDowSC[i]>0?hh/pDowSC[i]:0);
-        const pDowAvgW=pDowWH.map((hh,i)=>pDowWC[i]>0?hh/pDowWC[i]:0);
-        let fH=0,fSH=0,fWH=0;
-        for(let d=daysPassed+1;d<=daysTotal;d++){
-          const dow=new Date(year,month,d).getDay();
-          fH+=pDowAvg[dow]; fSH+=pDowAvgS[dow]; fWH+=pDowAvgW[dow];
-        }
-        fH=Math.round(fH*100)/100; fSH=Math.round(fSH*100)/100; fWH=Math.round(fWH*100)/100;
-        const forecast=rate>0?Math.round((rev+fH*rate)*100)/100:0;
-        return {p,h,rate,rev,sH,wH,empCount,stuCount,forecast,fSH,fWH,fH};
-      })
-      .filter(r=>r.h>0)
-      .sort((a,b)=>b.rev-a.rev);
-
-    if (projRows.length===0) { showToast("Brak danych do eksportu","err"); return; }
-
-    const wb = XLSX.utils.book_new();
-    const fmt2 = (n) => Math.round(Number(n)*100)/100;
-
-    // Arkusz 1: Zestawienie projektów
-    const header = [
-      "Nr","Projekt","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie",
-      "Stawka (zł)","Przychód (zł)","Prognoza (zł)",
-      "Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS"
-    ];
-    const dataRows = projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH})=>([
-      p.number||"",
-      p.name,
-      empCount,
-      stuCount,
-      fmt2(sH),
-      fmt2(wH),
-      fmt2(h),
-      rate>0?fmt2(rate):"",
-      rev>0?fmt2(rev):"",
-      forecast>0?fmt2(forecast):"",
-      sH+fSH>0?fmt2(sH+fSH):"",
-      wH+fWH>0?fmt2(wH+fWH):"",
-      h+fH>0?fmt2(h+fH):"",
-      h>0?Math.round((sH/h)*100):0,
-    ]));
-
-    // Wiersz RAZEM
-    const totalH    = fmt2(projRows.reduce((s,r)=>s+r.h,0));
-    const totalSH   = fmt2(projRows.reduce((s,r)=>s+r.sH,0));
-    const totalWH   = fmt2(projRows.reduce((s,r)=>s+r.wH,0));
-    const totalRev  = fmt2(projRows.reduce((s,r)=>s+r.rev,0));
-    const totalFc   = fmt2(projRows.reduce((s,r)=>s+r.forecast,0));
-    const totalPSH  = fmt2(projRows.reduce((s,r)=>s+r.sH+r.fSH,0));
-    const totalPWH  = fmt2(projRows.reduce((s,r)=>s+r.wH+r.fWH,0));
-    const totalPH   = fmt2(projRows.reduce((s,r)=>s+r.h+r.fH,0));
-    const stuPct    = totalH>0?Math.round((totalSH/totalH)*100):0;
-    const activeEmpCount = employees.filter(e=>myProjects.some(p=>empTotal(p.id,e.id)>0)).length;
-    const activeStuCount = employees.filter(e=>e.is_student&&myProjects.some(p=>empTotal(p.id,e.id)>0)).length;
-
-    const sumRow = [
-      "","RAZEM",activeEmpCount,activeStuCount,
-      totalSH,totalWH,totalH,"",totalRev,totalFc,
-      totalPSH,totalPWH,totalPH,stuPct
-    ];
-
-    const ws1 = XLSX.utils.aoa_to_sheet([header, ...dataRows, sumRow]);
-    ws1['!cols'] = [
-      {wch:8},{wch:28},{wch:7},{wch:7},{wch:11},{wch:12},{wch:10},
-      {wch:13},{wch:14},{wch:14},{wch:12},{wch:13},{wch:13},{wch:8}
-    ];
-    XLSX.utils.book_append_sheet(wb, ws1, `Raport ${monthName} ${year}`.substring(0,31));
-
-    // Arkusz 2: KPI podsumowanie
-    const totalAllH = fmt2(myProjects.reduce((s,p)=>s+projTotal(p.id),0));
-    const studentH  = fmt2(myProjects.reduce((s,p)=>s+studentEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0));
-    const workerH   = fmt2(myProjects.reduce((s,p)=>s+workerEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0));
-
-    const WORKING_DAYS = {
-      "2026-1":22,"2026-2":20,"2026-3":20,"2026-4":21,
-      "2026-5":21,"2026-6":20,"2026-7":23,"2026-8":20,
-      "2026-9":22,"2026-10":22,"2026-11":20,"2026-12":20,
-    };
-    const workingDaysTotal  = WORKING_DAYS[`${year}-${month+1}`]||daysTotal;
-    const workingDaysPassed = daysPassed>=daysTotal
-      ? workingDaysTotal
-      : Math.round((daysPassed/daysTotal)*workingDaysTotal);
-    const dailyAvg = workingDaysPassed>0 ? fmt2(totalRev/workingDaysPassed) : 0;
-
-    const ws2 = XLSX.utils.aoa_to_sheet([
-      [`Raport miesięczny — ${monthName} ${year}`],
-      [],
-      ["Wskaźnik","Wartość"],
-      ["Miesiąc",`${monthName} ${year}`],
-      ["Dzień raportu",`${daysPassed}/${daysTotal}`],
-      ["Aktywne projekty",projRows.length],
-      ["Aktywni pracownicy",activeEmpCount],
-      ["w tym UZS (studenci)",activeStuCount],
-      [],
-      ["Godziny łącznie",totalAllH],
-      ["Godziny UZS",studentH],
-      ["Godziny UZSO",workerH],
-      ["% UZS",`${totalH>0?Math.round((studentH/totalH)*100):0}%`],
-      [],
-      ["Przychód (do teraz)",totalRev],
-      ["Śr. dzienna przychód",dailyAvg],
-      ["Prognoza przychodu (cały miesiąc)",totalFc],
-      ["Prognoza godzin łącznie",totalPH],
+    const projRows = [...myProjects].map(p => {
+      const h=projTotal(p.id), rate=getRate(p), rev=projRev(p);
+      const sH=Math.round(studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
+      const wH=Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
+      const empCount=employees.filter(e=>empTotal(p.id,e.id)>0).length;
+      const stuCount=studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
+      const pDowH=[0,0,0,0,0,0,0],pDowC=[0,0,0,0,0,0,0];
+      const pDowSH=[0,0,0,0,0,0,0],pDowSC=[0,0,0,0,0,0,0];
+      const pDowWH=[0,0,0,0,0,0,0],pDowWC=[0,0,0,0,0,0,0];
+      for(let d=1;d<=daysPassed;d++){
+        const dow=new Date(year,month,d).getDay();
+        const dh=dayTotal(p.id,d); if(dh>0){pDowH[dow]+=dh;pDowC[dow]++;}
+        const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
+        if(dsh>0){pDowSH[dow]+=dsh;pDowSC[dow]++;}
+        const dwh=workerEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
+        if(dwh>0){pDowWH[dow]+=dwh;pDowWC[dow]++;}
+      }
+      const pDowAvg=pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
+      const pDowAvgS=pDowSH.map((hh,i)=>pDowSC[i]>0?hh/pDowSC[i]:0);
+      const pDowAvgW=pDowWH.map((hh,i)=>pDowWC[i]>0?hh/pDowWC[i]:0);
+      let fH=0,fSH=0,fWH=0;
+      for(let d=daysPassed+1;d<=daysTotal;d++){
+        const dow=new Date(year,month,d).getDay();
+        fH+=pDowAvg[dow]; fSH+=pDowAvgS[dow]; fWH+=pDowAvgW[dow];
+      }
+      fH=Math.round(fH*100)/100; fSH=Math.round(fSH*100)/100; fWH=Math.round(fWH*100)/100;
+      const forecast=rate>0?Math.round((rev+fH*rate)*100)/100:0;
+      return {p,h,rate,rev,sH,wH,empCount,stuCount,forecast,fSH,fWH,fH};
+    }).filter(r=>r.h>0).sort((a,b)=>b.rev-a.rev);
+    if (projRows.length===0){showToast("Brak danych do eksportu","err");return;}
+    const wb=XLSX.utils.book_new();
+    const fmt2=(n)=>Math.round(Number(n)*100)/100;
+    const header=["Nr","Projekt","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie","Stawka (zł)","Przychód (zł)","Prognoza (zł)","Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS"];
+    const dataRows=projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH})=>[
+      p.number||"",p.name,empCount,stuCount,fmt2(sH),fmt2(wH),fmt2(h),
+      rate>0?fmt2(rate):"",rev>0?fmt2(rev):"",forecast>0?fmt2(forecast):"",
+      sH+fSH>0?fmt2(sH+fSH):"",wH+fWH>0?fmt2(wH+fWH):"",h+fH>0?fmt2(h+fH):"",h>0?Math.round((sH/h)*100):0
     ]);
-    ws2['!cols'] = [{wch:36},{wch:20}];
+    const totalH=fmt2(projRows.reduce((s,r)=>s+r.h,0));
+    const totalSH=fmt2(projRows.reduce((s,r)=>s+r.sH,0));
+    const totalWH=fmt2(projRows.reduce((s,r)=>s+r.wH,0));
+    const totalRev=fmt2(projRows.reduce((s,r)=>s+r.rev,0));
+    const totalFc=fmt2(projRows.reduce((s,r)=>s+r.forecast,0));
+    const totalPSH=fmt2(projRows.reduce((s,r)=>s+r.sH+r.fSH,0));
+    const totalPWH=fmt2(projRows.reduce((s,r)=>s+r.wH+r.fWH,0));
+    const totalPH=fmt2(projRows.reduce((s,r)=>s+r.h+r.fH,0));
+    const stuPct=totalH>0?Math.round((totalSH/totalH)*100):0;
+    const activeEmpCount=employees.filter(e=>myProjects.some(p=>empTotal(p.id,e.id)>0)).length;
+    const activeStuCount=employees.filter(e=>e.is_student&&myProjects.some(p=>empTotal(p.id,e.id)>0)).length;
+    const sumRow=["","RAZEM",activeEmpCount,activeStuCount,totalSH,totalWH,totalH,"",totalRev,totalFc,totalPSH,totalPWH,totalPH,stuPct];
+    const ws1=XLSX.utils.aoa_to_sheet([header,...dataRows,sumRow]);
+    ws1["!cols"]=[{wch:8},{wch:28},{wch:7},{wch:7},{wch:11},{wch:12},{wch:10},{wch:13},{wch:14},{wch:14},{wch:12},{wch:13},{wch:13},{wch:8}];
+    XLSX.utils.book_append_sheet(wb, ws1, `Raport ${monthName} ${year}`.substring(0,31));
+    const WORKING_DAYS={"2026-1":22,"2026-2":20,"2026-3":20,"2026-4":21,"2026-5":21,"2026-6":20,"2026-7":23,"2026-8":20,"2026-9":22,"2026-10":22,"2026-11":20,"2026-12":20};
+    const workingDaysTotal=WORKING_DAYS[`${year}-${month+1}`]||daysTotal;
+    const workingDaysPassed=daysPassed>=daysTotal?workingDaysTotal:Math.round((daysPassed/daysTotal)*workingDaysTotal);
+    const dailyAvg=workingDaysPassed>0?fmt2(totalRev/workingDaysPassed):0;
+    const totalAllH=fmt2(myProjects.reduce((s,p)=>s+projTotal(p.id),0));
+    const studentH=fmt2(myProjects.reduce((s,p)=>s+studentEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0));
+    const workerH=fmt2(myProjects.reduce((s,p)=>s+workerEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0));
+    const ws2=XLSX.utils.aoa_to_sheet([
+      [`Raport miesięczny — ${monthName} ${year}`],[],["Wskaźnik","Wartość"],
+      ["Miesiąc",`${monthName} ${year}`],["Dzień raportu",`${daysPassed}/${daysTotal}`],
+      ["Aktywne projekty",projRows.length],["Aktywni pracownicy",activeEmpCount],["w tym UZS (studenci)",activeStuCount],[],
+      ["Godziny łącznie",totalAllH],["Godziny UZS",studentH],["Godziny UZSO",workerH],
+      ["% UZS",`${totalH>0?Math.round((studentH/totalH)*100):0}%`],[],
+      ["Przychód (do teraz)",totalRev],["Śr. dzienna przychód",dailyAvg],
+      ["Prognoza przychodu (cały miesiąc)",totalFc],["Prognoza godzin łącznie",totalPH],
+    ]);
+    ws2["!cols"]=[{wch:36},{wch:20}];
     XLSX.utils.book_append_sheet(wb, ws2, "KPI");
-
     XLSX.writeFile(wb, `VIAVOX_Raport_${monthName}_${year}.xlsx`);
     showToast(`Pobrano: VIAVOX_Raport_${monthName}_${year}.xlsx`);
   }
 
   function exportReportToCSV() {
-    const monthName = MONTHS[month];
-    const today     = new Date();
-    const daysTotal = daysInMonth(year, month);
-    const daysPassed = (year===today.getFullYear()&&month===today.getMonth()) ? today.getDate() : daysTotal;
-
-    const studentEmps = employees.filter(e=>e.is_student);
-    const workerEmps  = employees.filter(e=>!e.is_student);
-    const getRate = (p) => (p&&p.number&&rates&&rates[p.number]) ? Number(rates[p.number]) : 0;
-    const projRev = (p) => Math.round(projTotal(p.id)*getRate(p)*100)/100;
-
-    const projRows = [...myProjects]
-      .map(p => {
-        const h        = projTotal(p.id);
-        const rate     = getRate(p);
-        const rev      = projRev(p);
-        const sH       = Math.round(studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
-        const wH       = Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
-        const empCount = employees.filter(e=>empTotal(p.id,e.id)>0).length;
-        const stuCount = studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
-        const pDowH=[0,0,0,0,0,0,0],pDowC=[0,0,0,0,0,0,0];
-        const pDowSH=[0,0,0,0,0,0,0],pDowSC=[0,0,0,0,0,0,0];
-        const pDowWH=[0,0,0,0,0,0,0],pDowWC=[0,0,0,0,0,0,0];
-        for(let d=1;d<=daysPassed;d++){
-          const dow=new Date(year,month,d).getDay();
-          const dh=dayTotal(p.id,d);
-          if(dh>0){pDowH[dow]+=dh;pDowC[dow]++;}
-          const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
-          if(dsh>0){pDowSH[dow]+=dsh;pDowSC[dow]++;}
-          const dwh=workerEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
-          if(dwh>0){pDowWH[dow]+=dwh;pDowWC[dow]++;}
-        }
-        const pDowAvg =pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
-        let fH=0,fSH=0,fWH=0;
-        for(let d=daysPassed+1;d<=daysTotal;d++){
-          const dow=new Date(year,month,d).getDay();
-          fH+=pDowAvg[dow];
-          fSH+=pDowSH.map((hh,i)=>pDowSC[i]>0?hh/pDowSC[i]:0)[dow];
-          fWH+=pDowWH.map((hh,i)=>pDowWC[i]>0?hh/pDowWC[i]:0)[dow];
-        }
-        fH=Math.round(fH*100)/100; fSH=Math.round(fSH*100)/100; fWH=Math.round(fWH*100)/100;
-        const forecast=rate>0?Math.round((rev+fH*rate)*100)/100:0;
-        return {p,h,rate,rev,sH,wH,empCount,stuCount,forecast,fSH,fWH,fH};
-      })
-      .filter(r=>r.h>0)
-      .sort((a,b)=>b.rev-a.rev);
-
-    if (projRows.length===0) { showToast("Brak danych do eksportu","err"); return; }
-
-    const rows = [
-      ["Nr","Projekt","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie",
-       "Stawka","Przychód","Prognoza","Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS"],
+    const monthName=MONTHS[month];
+    const today=new Date();
+    const daysTotal=daysInMonth(year,month);
+    const daysPassed=(year===today.getFullYear()&&month===today.getMonth())?today.getDate():daysTotal;
+    const studentEmps=employees.filter(e=>e.is_student);
+    const workerEmps=employees.filter(e=>!e.is_student);
+    const getRate=(p)=>(p&&p.number&&rates&&rates[p.number])?Number(rates[p.number]):0;
+    const projRows=[...myProjects].map(p=>{
+      const h=projTotal(p.id),rate=getRate(p),rev=Math.round(h*rate*100)/100;
+      const sH=Math.round(studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
+      const wH=Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
+      const empCount=employees.filter(e=>empTotal(p.id,e.id)>0).length;
+      const stuCount=studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
+      const pDowH=[0,0,0,0,0,0,0],pDowC=[0,0,0,0,0,0,0];
+      const pDowSH=[0,0,0,0,0,0,0],pDowSC=[0,0,0,0,0,0,0];
+      const pDowWH=[0,0,0,0,0,0,0],pDowWC=[0,0,0,0,0,0,0];
+      for(let d=1;d<=daysPassed;d++){
+        const dow=new Date(year,month,d).getDay();
+        const dh=dayTotal(p.id,d); if(dh>0){pDowH[dow]+=dh;pDowC[dow]++;}
+        const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
+        if(dsh>0){pDowSH[dow]+=dsh;pDowSC[dow]++;}
+        const dwh=workerEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
+        if(dwh>0){pDowWH[dow]+=dwh;pDowWC[dow]++;}
+      }
+      const pDowAvg=pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
+      let fH=0,fSH=0,fWH=0;
+      for(let d=daysPassed+1;d<=daysTotal;d++){
+        const dow=new Date(year,month,d).getDay();
+        fH+=pDowAvg[dow];
+        fSH+=pDowSH.map((hh,i)=>pDowSC[i]>0?hh/pDowSC[i]:0)[dow];
+        fWH+=pDowWH.map((hh,i)=>pDowWC[i]>0?hh/pDowWC[i]:0)[dow];
+      }
+      fH=Math.round(fH*100)/100; fSH=Math.round(fSH*100)/100; fWH=Math.round(fWH*100)/100;
+      const forecast=rate>0?Math.round((rev+fH*rate)*100)/100:0;
+      return {p,h,rate,rev,sH,wH,empCount,stuCount,forecast,fSH,fWH,fH};
+    }).filter(r=>r.h>0).sort((a,b)=>b.rev-a.rev);
+    if(projRows.length===0){showToast("Brak danych do eksportu","err");return;}
+    const rows=[
+      ["Nr","Projekt","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie","Stawka","Przychód","Prognoza","Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS"],
       ...projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH})=>[
-        p.number||"", p.name, empCount, stuCount,
-        sH, wH, h,
-        rate>0?rate:"",
-        rev>0?rev:"",
-        forecast>0?forecast:"",
+        p.number||"",p.name,empCount,stuCount,sH,wH,h,
+        rate>0?rate:"",rev>0?rev:"",forecast>0?forecast:"",
         sH+fSH>0?Math.round((sH+fSH)*100)/100:"",
         wH+fWH>0?Math.round((wH+fWH)*100)/100:"",
         h+fH>0?Math.round((h+fH)*100)/100:"",
         h>0?`${Math.round((sH/h)*100)}%`:"",
       ])
     ];
-
-    const bom = "\uFEFF";
-    const csv = rows.map(r=>r.map(v=>{
-      const s=String(v);
-      if(s.includes(",")||s.includes("\n")) return '"'+s.replace(/"/g,'""')+'"';
-      return s;
-    }).join(",")).join("\r\n");
-    const blob = new Blob([bom+csv],{type:"text/csv;charset=utf-8;"});
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
+    const bom="﻿";
+    const csv=rows.map(r=>r.map(v=>{const s=String(v);return s.includes(",")||s.includes("\n")?'"'+s.replace(/"/g,'""')+'"':s;}).join(",")).join("\r\n");
+    const blob=new Blob([bom+csv],{type:"text/csv;charset=utf-8;"});
+    const url=URL.createObjectURL(blob); const a=document.createElement("a");
     a.href=url; a.download=`VIAVOX_Raport_${monthName}_${year}.csv`;
     a.click(); URL.revokeObjectURL(url);
     showToast(`Pobrano: VIAVOX_Raport_${monthName}_${year}.csv`);
+  }
+
+  // ── Load akord (piece_work) for current month ────────────────────────────
+  useEffect(() => {
+    if (!currentManager) return;
+    if (projects.length === 0) return;
+    async function loadAkord() {
+      const from = toDateStr(year, month, 1);
+      const to   = toDateStr(year, month, daysInMonth(year, month));
+      const myProjIds = currentManager.is_admin
+        ? projects.map(p => p.id)
+        : mgrProjects.filter(mp => mp.manager_id === currentManager.id).map(mp => mp.project_id);
+      if (myProjIds.length === 0) return;
+      const map = {};
+      const PAGE = 1000;
+      let from_idx = 0;
+      while (true) {
+        let q = supabase.from("piece_work")
+          .select("project_id,employee_id,work_date,quantity")
+          .gte("work_date", from)
+          .lte("work_date", to)
+          .range(from_idx, from_idx + PAGE - 1);
+        if (!currentManager.is_admin && myProjIds.length <= 20) {
+          q = q.in("project_id", myProjIds);
+        }
+        const { data, error } = await q;
+        if (error || !data || data.length === 0) break;
+        for (const row of data) {
+          map[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.quantity);
+        }
+        if (data.length < PAGE) break;
+        from_idx += PAGE;
+      }
+      setAkordMap(map);
+    }
+    loadAkord();
+  }, [currentManager, year, month, projects, mgrProjects]);
+
+  // ── Akord state + helpers ─────────────────────────────────────────────────
+  const [akordProj, setAkordProj] = useState(null);
+  const [akordSearch, setAkordSearch] = useState("");
+
+  function getA(projId, empId, day) {
+    return akordMap[`${projId}|${empId}|${toDateStr(year, month, day)}`] ?? "";
+  }
+
+  function setA(projId, empId, day, val) {
+    const dateStr = toDateStr(year, month, day);
+    const key = `${projId}|${empId}|${dateStr}`;
+    setAkordMap(prev => ({ ...prev, [key]: val }));
+    if (saveTimerAkord.current[key]) clearTimeout(saveTimerAkord.current[key]);
+    saveTimerAkord.current[key] = setTimeout(async () => {
+      const num = parseInt(val);
+      if (val === "" || val === null) {
+        await supabase.from("piece_work").delete()
+          .eq("project_id", projId).eq("employee_id", empId).eq("work_date", dateStr);
+      } else if (!isNaN(num) && num >= 0) {
+        await supabase.from("piece_work").upsert({
+          project_id: projId, employee_id: empId,
+          work_date: dateStr, quantity: num,
+        }, { onConflict: "project_id,employee_id,work_date" });
+      }
+    }, 600);
+  }
+
+  const akordTotalsCache = useMemo(() => {
+    const empProj = {}, dayProj = {};
+    for (const [key, val] of Object.entries(akordMap)) {
+      const [projId, empId, dateStr] = key.split("|");
+      const mk = dateStr ? dateStr.substring(0,7) : "";
+      if (mk !== `${year}-${String(month+1).padStart(2,"0")}`) continue;
+      const u = parseInt(val) || 0;
+      if (u <= 0) continue;
+      const day = parseInt(dateStr.substring(8,10));
+      if (!empProj[projId]) empProj[projId] = {};
+      empProj[projId][empId] = (empProj[projId][empId] || 0) + u;
+      if (!dayProj[projId]) dayProj[projId] = {};
+      dayProj[projId][day] = (dayProj[projId][day] || 0) + u;
+    }
+    return { empProj, dayProj };
+  }, [akordMap, year, month]);
+
+  function empAkord(projId, empId) { return akordTotalsCache.empProj[projId]?.[empId] || 0; }
+  function dayAkord(projId, day)   { return akordTotalsCache.dayProj[projId]?.[day]   || 0; }
+  function projAkord(projId) {
+    return Object.values(akordTotalsCache.empProj[projId] || {}).reduce((s,v)=>s+v,0);
+  }
+
+  function exportAkordToExcel() {
+    const XLSX = window.XLSX;
+    if (!XLSX) { exportAkordToCSV(); return; }
+    const monthName = MONTHS[month];
+    const numDays   = daysInMonth(year, month);
+    const wb = XLSX.utils.book_new();
+    const projList = akordProj ? myProjects.filter(p=>p.id===akordProj) : myProjects;
+    projList.forEach(proj => {
+      const ep = akordTotalsCache.empProj[proj.id] || {};
+      const projEmps = employees.filter(e=>(ep[e.id]||0)>0);
+      if (projEmps.length === 0) return;
+      const header = ["Nazwisko","Imię","Student",
+        ...Array.from({length:numDays},(_,i)=>`${String(i+1).padStart(2,"0")}.${String(month+1).padStart(2,"0")}.${year}`),
+        "SUMA (szt.)"];
+      const rows = [header];
+      projEmps.forEach(emp => {
+        const vals = []; let suma = 0;
+        for (let d=1; d<=numDays; d++) {
+          const u = parseInt(akordMap[`${proj.id}|${emp.id}|${toDateStr(year,month,d)}`])||0;
+          vals.push(u>0?u:0); suma+=u;
+        }
+        rows.push([emp.last_name, emp.first_name, emp.is_student?"TAK":"NIE", ...vals, suma]);
+      });
+      const totals = ["SUMA DZIENNA","",""]; let grand=0;
+      for (let d=1; d<=numDays; d++) {
+        const t=projEmps.reduce((s,e)=>s+(parseInt(akordMap[`${proj.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
+        totals.push(t); grand+=t;
+      }
+      totals.push(grand); rows.push(totals);
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [{wch:18},{wch:14},{wch:8},...Array(numDays).fill({wch:6}),{wch:10}];
+      XLSX.utils.book_append_sheet(wb, ws,
+        ((proj.number?`[${proj.number}] `:"")+proj.name).replace(/[:\\/\?\*\[\]]/g,"").substring(0,31));
+    });
+    if (wb.SheetNames.length===0){showToast("Brak danych do eksportu","err");return;}
+    XLSX.writeFile(wb, `VIAVOX_Akord_${monthName}_${year}.xlsx`);
+    showToast(`Pobrano: VIAVOX_Akord_${monthName}_${year}.xlsx`);
+  }
+
+  function exportAkordToCSV() {
+    const monthName = MONTHS[month];
+    const numDays   = daysInMonth(year, month);
+    const rows = [["Projekt","Nr","Nazwisko","Imię","Student","Data","Kartony"]];
+    const projList = akordProj ? myProjects.filter(p=>p.id===akordProj) : myProjects;
+    projList.forEach(proj => {
+      employees.forEach(emp => {
+        for (let d=1; d<=numDays; d++) {
+          const u = parseInt(akordMap[`${proj.id}|${emp.id}|${toDateStr(year,month,d)}`])||0;
+          if (u>0) rows.push([proj.name,proj.number||"",emp.last_name,emp.first_name,emp.is_student?"TAK":"NIE",toDateStr(year,month,d),u]);
+        }
+      });
+    });
+    if (rows.length<=1){showToast("Brak danych do eksportu","err");return;}
+    const bom="﻿";
+    const csv=rows.map(r=>r.map(v=>{const s=String(v);return s.includes(",")||s.includes("\n")?'"'+s.replace(/"/g,'""')+'"':s;}).join(",")).join("\r\n");
+    const blob=new Blob([bom+csv],{type:"text/csv;charset=utf-8;"});
+    const url=URL.createObjectURL(blob); const a=document.createElement("a");
+    a.href=url; a.download=`VIAVOX_Akord_${monthName}_${year}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast(`Pobrano: VIAVOX_Akord_${monthName}_${year}.csv`);
   }
 
   function prevMonth() { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); }
@@ -985,6 +1053,7 @@ export default function App() {
             ["timesheet","Timesheet"],
             ["employees","Pracownicy"],
             ...(isAdmin ? [["projects","Projekty"],["managers","Kierownicy"]] : []),
+            ["akord","Akord"],
             ["report","Raport"],
           ].map(([key,label])=>(
             <button key={key} className={`nav-tab${tab===key?" active":""}`}
@@ -1031,6 +1100,7 @@ export default function App() {
                 ["timesheet","📋 Timesheet"],
                 ["employees","👥 Pracownicy"],
                 ...(isAdmin ? [["projects","📁 Projekty"],["managers","👤 Kierownicy"]] : []),
+                ["akord","📦 Akord"],
                 ["report","📊 Raport"],
               ].map(([key,label])=>(
                 <button key={key} onClick={()=>{setTab(key);setMobileNavOpen(false);}} style={{
@@ -1464,6 +1534,151 @@ export default function App() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ AKORD ═══ */}
+      {tab==="akord" && (
+        <div style={{ display:"flex", flexDirection:"column", height:"calc(100vh - 53px)" }}>
+          <div style={{ background:C.white, borderBottom:`1px solid ${C.gray3}`,
+                        padding: isMobile?"8px 12px":"8px 20px",
+                        display:"flex", alignItems:"center", gap: isMobile?8:12,
+                        flexShrink:0, flexWrap: isMobile?"wrap":"nowrap" }}>
+            <button className="btn-ghost" onClick={prevMonth} style={{ padding:"5px 10px", fontSize:14, flexShrink:0 }}>‹</button>
+            <div style={{ fontWeight:600, fontSize:14, color:C.gray7, width:isMobile?130:148, textAlign:"center", flexShrink:0 }}>
+              {MONTHS[month]} {year}
+            </div>
+            <button className="btn-ghost" onClick={nextMonth} style={{ padding:"5px 10px", fontSize:14, flexShrink:0 }}>›</button>
+            {!isMobile && <div style={{ width:1, height:24, background:C.gray3, flexShrink:0 }} />}
+            <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0, flex: isMobile?"1":"none" }}>
+              {!isMobile && <span style={{ fontSize:11, color:C.gray5, fontWeight:500 }}>Projekt</span>}
+              <select className="inp" value={akordProj||""} onChange={e=>setAkordProj(e.target.value||null)}
+                style={{ width: isMobile?"100%":260, padding:"7px 10px", fontSize:13, fontWeight:500, color:C.gray7,
+                         borderColor:akordProj?C.blue:C.gray3, boxShadow:akordProj?`0 0 0 3px ${C.blueLight}`:"none" }}>
+                <option value="">— wszyscy pracownicy —</option>
+                {[...myProjects].sort((a,b)=>(a.number||"").localeCompare(b.number||"","pl",{numeric:true})).map(p=>(
+                  <option key={p.id} value={p.id}>{p.number?`[${p.number}] ${p.name}`:p.name}</option>
+                ))}
+              </select>
+            </div>
+            {!isMobile && (
+              <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:0 }}>
+                <span style={{ fontSize:11, color:C.gray5, fontWeight:500, whiteSpace:"nowrap" }}>Szukaj</span>
+                <input className="inp" placeholder="imię lub nazwisko…" value={akordSearch}
+                  onChange={e=>setAkordSearch(e.target.value)}
+                  style={{ flex:1, minWidth:0, padding:"7px 11px", fontSize:13 }} />
+              </div>
+            )}
+            <div style={{ display:"flex", gap:6, flexShrink:0, alignItems:"center" }}>
+              <div style={{ background:"#FFF3E0", color:"#E07B20", fontSize:11, fontWeight:600,
+                            padding:"4px 10px", borderRadius:6, whiteSpace:"nowrap" }}>📦 kartony / dzień</div>
+              <button className="btn-ghost btn-sm" onClick={exportAkordToExcel}>⬇ Excel</button>
+              <button className="btn-ghost btn-sm" onClick={exportAkordToCSV}>⬇ CSV</button>
+            </div>
+          </div>
+          <div style={{ flex:1, overflow:"auto" }}>
+            {(()=>{
+              const q = akordSearch.toLowerCase().trim();
+              let base = employees;
+              if (akordProj) {
+                const ids = new Set(Object.keys(akordMap).filter(k=>k.startsWith(akordProj+"|")).map(k=>k.split("|")[1]));
+                if (ids.size>0) base = employees.filter(e=>ids.has(e.id));
+              }
+              const filteredAkordEmps = q ? employees.filter(e=>`${e.first_name} ${e.last_name}`.toLowerCase().includes(q)) : base;
+              return (
+                <table style={{ borderCollapse:"collapse", minWidth:"100%", fontSize:12 }}>
+                  <thead style={{ position:"sticky", top:0, zIndex:10 }}>
+                    <tr style={{ background:C.gray2 }}>
+                      <th style={{ ...TH, width: isMobile?110:210, position:"sticky", left:0, zIndex:11,
+                                   background:C.gray2, textAlign:"left", padding: isMobile?"8px 8px":"10px 16px",
+                                   borderRight:`1px solid ${C.gray3}`, color:C.gray5 }}>
+                        {isMobile?"PRAC.":"PRACOWNIK"}
+                      </th>
+                      {Array.from({length:days},(_,i)=>i+1).map(d=>(
+                        <th key={d} style={{ ...TH, width: isMobile?28:36, minWidth: isMobile?28:36,
+                          background:isWeekend(year,month,d)?C.wknd:C.gray2, borderBottom:`1px solid ${C.gray3}` }}>
+                          <div style={{ color:isWeekend(year,month,d)?C.gray3:"#E07B20", fontSize:13, fontWeight:600 }}>{d}</div>
+                          <div style={{ fontSize:9, marginTop:1, color:isWeekend(year,month,d)?C.gray3:C.gray4, fontWeight:500 }}>
+                            {DOW[dayOfWeek(year,month,d)]}
+                          </div>
+                        </th>
+                      ))}
+                      <th style={{ ...TH, width:80, position:"sticky", right:0,
+                                   background:C.gray2, borderLeft:`1px solid ${C.gray3}`, color:C.gray5 }}>SUMA</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredAkordEmps.length===0 && (
+                      <tr><td colSpan={days+2} style={{ padding:32, color:C.gray4, textAlign:"center" }}>Brak pracowników</td></tr>
+                    )}
+                    {filteredAkordEmps.map((emp,ri)=>{
+                      const total = empAkord(akordProj, emp.id);
+                      const rowBg = ri%2===0?C.white:"#F8FAFC";
+                      return (
+                        <tr key={emp.id} className="emp-row" style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
+                          <td style={{ position:"sticky", left:0, zIndex:2, background:rowBg,
+                                       borderRight:`1px solid ${C.gray2}`, padding: isMobile?"5px 6px":"6px 14px", whiteSpace:"nowrap" }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                              <div style={{ width:26, height:26, borderRadius:"50%", background:"#FFF3E0",
+                                            color:"#E07B20", display:"flex", alignItems:"center", justifyContent:"center",
+                                            fontSize:10, fontWeight:600, flexShrink:0 }}>
+                                {emp.first_name[0]}{emp.last_name[0]}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight:500, color:C.gray7, fontSize: isMobile?11:12 }}>
+                                  {isMobile ? emp.last_name : `${emp.first_name} ${emp.last_name}`}
+                                </div>
+                                {!isMobile && emp.uk_number && <div style={{ fontSize:10, color:C.gray4 }}>{emp.uk_number}</div>}
+                              </div>
+                              {emp.is_student?<span className="tag-s">STU</span>:<span className="tag-p">PR</span>}
+                            </div>
+                          </td>
+                          {Array.from({length:days},(_,i)=>i+1).map(d=>{
+                            const val = getA(akordProj, emp.id, d);
+                            return (
+                              <td key={d}
+                                className={`ts-cell${isWeekend(year,month,d)?" wknd":""}${val?" filled":""}`}
+                                style={{ height:36, padding:0, borderRight:`1px solid ${C.gray2}` }}>
+                                <input type="number" min="0" step="1" placeholder="·" value={val}
+                                  onChange={e=>setA(akordProj, emp.id, d, e.target.value)} />
+                              </td>
+                            );
+                          })}
+                          <td style={{ position:"sticky", right:0, zIndex:2, background:rowBg,
+                                       borderLeft:`1px solid ${C.gray2}`, padding:"0 8px",
+                                       textAlign:"center", fontWeight:600, whiteSpace:"nowrap",
+                                       color:total>0?"#E07B20":C.gray3, fontSize:12 }}>
+                            {total>0?`${total.toLocaleString("pl-PL")} szt.`:"—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr style={{ background:C.gray2, borderTop:`2px solid ${C.gray3}`, position:"sticky", bottom:0, zIndex:5 }}>
+                      <td style={{ position:"sticky", left:0, background:C.gray2,
+                                   borderRight:`1px solid ${C.gray3}`, padding:"7px 14px",
+                                   color:C.gray5, fontSize:10, fontWeight:500 }}>SUMA DNIA</td>
+                      {Array.from({length:days},(_,i)=>i+1).map(d=>{
+                        const t = dayAkord(akordProj, d);
+                        return (
+                          <td key={d} style={{ textAlign:"center", padding:"6px 0",
+                                               borderRight:`1px solid ${C.gray2}`,
+                                               color:t>0?C.gray6:C.gray3, fontSize:11, fontWeight:t>0?500:400 }}>
+                            {t>0?t.toLocaleString("pl-PL"):""}
+                          </td>
+                        );
+                      })}
+                      <td style={{ position:"sticky", right:0, background:C.gray2,
+                                   borderLeft:`1px solid ${C.gray3}`, textAlign:"center",
+                                   color:projAkord(akordProj)>0?"#E07B20":C.gray4,
+                                   fontWeight:700, fontSize:12, padding:"0 8px", whiteSpace:"nowrap" }}>
+                        {projAkord(akordProj)>0?`${projAkord(akordProj).toLocaleString("pl-PL")} szt.`:"—"}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              );
+            })()}
           </div>
         </div>
       )}
