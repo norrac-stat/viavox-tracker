@@ -128,6 +128,7 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [managers,   setManagers]   = useState([]);
   const [rates,      setRates]      = useState({});
+  const [pieceRates, setPieceRates] = useState({}); // key: project_id → {rate,unit}
   const [reportSortCol, setReportSortCol] = useState('rev');
   const [reportSortDir, setReportSortDir] = useState('desc');
   const [employees,  setEmployees]  = useState([]);
@@ -201,6 +202,15 @@ export default function App() {
             const ratesMap = {};
             rts.forEach(r => { ratesMap[r.number] = parseFloat(r.rate); });
             setRates(ratesMap);
+          });
+      } catch(e) {}
+      try {
+        supabase.from("piece_rates").select("project_id,rate,unit")
+          .then(({ data: prs }) => {
+            if (!prs) return;
+            const prMap = {};
+            prs.forEach(r => { prMap[r.project_id] = { rate: parseFloat(r.rate), unit: r.unit }; });
+            setPieceRates(prMap);
           });
       } catch(e) {}
     }
@@ -1735,6 +1745,15 @@ export default function App() {
         const getRate = (p) => (p && p.number && rates && rates[p.number]) ? Number(rates[p.number]) : 0;
         const projRev = (p) => Math.round(projTotal(p.id) * getRate(p) * 100)/100;
         const fmt = (n) => { const v=Number(n); return isNaN(v)?'0,00':v.toLocaleString('pl-PL',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+        const fmtInt = (n) => Number(n).toLocaleString('pl-PL');
+
+        // Akord helpers
+        const getPieceRate = (p) => pieceRates[p.id] ? pieceRates[p.id].rate : 0;
+        const getPieceUnit = (p) => pieceRates[p.id] ? pieceRates[p.id].unit : null;
+        const projKartony  = (p) => Object.values(akordTotalsCache.empProj[p.id]||{}).reduce((s,v)=>s+v,0);
+        const projRevAkord = (p) => Math.round(projKartony(p)*getPieceRate(p)*100)/100;
+        const totalKartony  = myProjects.reduce((s,p)=>s+projKartony(p),0);
+        const totalRevAkord = Math.round(myProjects.reduce((s,p)=>s+projRevAkord(p),0)*100)/100;
 
         const sortCol = reportSortCol;
         const sortDir = reportSortDir;
@@ -1748,7 +1767,8 @@ export default function App() {
           return <span style={{color:C.blue, fontSize:10}}>{sortDir==='asc'?' ↑':' ↓'}</span>;
         }
 
-        const totalRevenue = Math.round(myProjects.reduce((s,p)=>s+projRev(p),0)*100)/100;
+        const totalRevenueH = Math.round(myProjects.reduce((s,p)=>s+projRev(p),0)*100)/100;
+        const totalRevenue  = Math.round((totalRevenueH+totalRevAkord)*100)/100;
 
         // Algorytm prognozy: suma prognoz per projekt (każdy projekt ma swoją stawkę)
         const avgRate = 0; // unused at global level — calculated per project below
@@ -1809,9 +1829,28 @@ export default function App() {
             fSH = Math.round(fSH*100)/100;
             fWH = Math.round(fWH*100)/100;
             const forecast = rate>0 ? Math.round((rev + fH*rate)*100)/100 : 0;
-            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH};
+            const kartony   = projKartony(p);
+            const pieceRate = getPieceRate(p);
+            const pieceUnit = getPieceUnit(p);
+            const revAkord  = projRevAkord(p);
+            const pDowA=[0,0,0,0,0,0,0],pDowAC=[0,0,0,0,0,0,0];
+            for(let d=1;d<=lastSunR;d++){
+              const dow=new Date(year,month,d).getDay();
+              const da=dayAkord(p.id,d);
+              if(da>0){pDowA[dow]+=da;pDowAC[dow]++;}
+            }
+            const pDowAvgA=pDowA.map((u,i)=>pDowAC[i]>0?u/pDowAC[i]:0);
+            let fKartony=0;
+            for(let d=daysPassed+1;d<=daysTotal;d++){
+              fKartony+=pDowAvgA[new Date(year,month,d).getDay()];
+            }
+            fKartony=Math.round(fKartony);
+            const forecastAkord = pieceRate>0 ? Math.round((revAkord+fKartony*pieceRate)*100)/100 : 0;
+            const forecastTotal = Math.round((forecast+forecastAkord)*100)/100;
+            return {p,h,rate,rev,sH,wH,empCount,stuCount,forecast,fSH,fWH,fH,
+                    kartony,pieceRate,pieceUnit,revAkord,fKartony,forecastAkord,forecastTotal};
           })
-          .filter(r=>r.h>0)
+          .filter(r=>r.h>0||r.kartony>0)
           .sort((a,b)=>{
             const dir = sortDir==='asc' ? 1 : -1;
             switch(sortCol) {
@@ -1824,12 +1863,17 @@ export default function App() {
               case 'h':        return dir*(a.h-b.h);
               case 'rate':     return dir*(a.rate-b.rate);
               case 'forecast': return dir*(a.forecast-b.forecast);
-              case 'pct':      return dir*((a.h>0?a.sH/a.h:0)-(b.h>0?b.sH/b.h:0));
-              default:         return dir*(a.rev-b.rev);
+              case 'pct':          return dir*((a.h>0?a.sH/a.h:0)-(b.h>0?b.sH/b.h:0));
+              case 'kartony':      return dir*(a.kartony-b.kartony);
+              case 'revAkord':     return dir*(a.revAkord-b.revAkord);
+              case 'forecastTotal':return dir*(a.forecastTotal-b.forecastTotal);
+              default:             return dir*(a.rev-b.rev);
             }
           });
 
-        const totalForecast = Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100;
+        const totalForecastH = Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100;
+        const totalForecastA = Math.round(projRows.reduce((s,r)=>s+(r.forecastAkord||0),0)*100)/100;
+        const totalForecast  = Math.round((totalForecastH+totalForecastA)*100)/100;
         forecastRev = totalForecast;
 
         return (
@@ -1863,6 +1907,24 @@ export default function App() {
               </div>
             ))}
           </div>
+
+          {/* KPI akord */}
+          {totalKartony>0&&(
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:12 }}>
+              {[
+                {label:"Kartony — łącznie",  value:`${fmtInt(totalKartony)} szt.`, sub:"akord miesięczny"},
+                {label:"Przychód z akordu",  value:`${fmt(totalRevAkord)} zł`,     sub:"do teraz"},
+                {label:"Prognoza akord",      value:`${fmt(totalForecastA)} zł`,    sub:"cały miesiąc"},
+              ].map(({label,value,sub})=>(
+                <div key={label} style={{ background:"#FFFBF5", border:"1px solid #FFE0B2",
+                  borderRadius:10, padding:"14px 16px" }}>
+                  <div style={{ fontSize:10, color:C.gray4, fontWeight:500, marginBottom:5, textTransform:"uppercase", letterSpacing:".04em" }}>{label}</div>
+                  <div style={{ fontSize:22, fontWeight:700, color:"#E07B20", lineHeight:1 }}>{value}</div>
+                  <div style={{ fontSize:11, color:C.gray4, marginTop:5 }}>{sub}</div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* KPI przychód */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
@@ -1996,7 +2058,10 @@ export default function App() {
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.blue }}>{workerH}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.blue }}>{totalAllH}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
-                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#1F7A4C", fontSize:13 }}>{fmt(totalRevenue)} zł</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#1F7A4C", fontSize:13 }}>{fmt(totalRevenueH)} zł</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#E07B20", fontSize:12, fontWeight:600 }}>{totalKartony>0?`${fmtInt(totalKartony)} szt.`:"—"}</td>
+                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#B85C00", fontSize:12, fontWeight:600 }}>{totalRevAkord>0?`${fmt(totalRevAkord)} zł`:"—"}</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:13 }}>{fmt(totalForecast)} zł</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.sH+(r.fSH||0),0)*100)/100}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:C.blue, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.wH+(r.fWH||0),0)*100)/100}h</td>
