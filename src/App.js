@@ -1984,29 +1984,29 @@ export default function App() {
           {/* Tabela projektów */}
           <div className="report-table-scroll" style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10, overflow:"hidden" }}>
             <div style={{ padding:"12px 18px", borderBottom:`1px solid ${C.gray2}`, fontSize:12, fontWeight:600, color:C.gray6 }}>Zestawienie projektów</div>
-            <table style={{ width:"100%", minWidth:1300, borderCollapse:"collapse", fontSize:12 }}>
+            <table style={{ width:"100%", minWidth:1050, borderCollapse:"collapse", fontSize:11 }}>
               <thead>
                 <tr style={{ background:C.gray2 }}>
                   {[
-                    {label:"Nr",            col:"number"},
-                    {label:"Projekt",       col:"name"},
-                    {label:"Prac.",         col:"empCount"},
-                    {label:"UZS",           col:"stuCount"},
-                    {label:"Godz. UZS",     col:"sH"},
-                    {label:"Godz. UZSO",    col:"wH"},
-                    {label:"Łącznie",       col:"h"},
-                    {label:"Stawka",        col:"rate"},
-                    {label:"Przychód",      col:"rev"},
-                    {label:"Prognoza",      col:"forecast"},
-                    {label:"Prog. UZS h",   col:"fSH"},
-                    {label:"Prog. UZSO h",  col:"fWH"},
-                    {label:"Prog. Total h", col:"fH"},
-                    {label:"% UZS",         col:"pct"},
+                    {label:"Nr",         col:"number"},
+                    {label:"Projekt",    col:"name"},
+                    {label:"Prac.",      col:"empCount"},
+                    {label:"UZS",        col:"stuCount"},
+                    {label:"Godz. UZS",  col:"sH"},
+                    {label:"Godz. UZSO", col:"wH"},
+                    {label:"Łącznie",    col:"h"},
+                    {label:"Stawka",     col:"rate"},
+                    {label:"Prz. godz.", col:"rev"},
+                    {label:"Kartony",    col:"kartony"},
+                    {label:"Prz. akord", col:"revAkord"},
+                    {label:"Prognoza",   col:"forecastTotal"},
+                    {label:"Prog. h",    col:"fH"},
+                    {label:"% UZS",      col:"pct"},
                   ].map(({label,col})=>(
                     <th key={col} onClick={()=>toggleSort(col)}
-                      style={{ padding:"8px 10px",
+                      style={{ padding:"5px 5px",
                                textAlign:label==="Projekt"?"left":"center",
-                               fontSize:10, fontWeight:600,
+                               fontSize:9, fontWeight:600,
                                color:sortCol===col?C.blue:C.gray5,
                                borderBottom:`1px solid ${C.gray3}`,
                                cursor:"pointer", userSelect:"none", whiteSpace:"nowrap",
@@ -2020,29 +2020,29 @@ export default function App() {
                 {projRows.length===0&&(
                   <tr><td colSpan={14} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
                 )}
-                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH},ri)=>{
+                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH,kartony,pieceRate,pieceUnit,revAkord,fKartony,forecastAkord,forecastTotal},ri)=>{
                   const pct=h>0?Math.round((sH/h)*100):0; const rowBg=ri%2===0?C.white:"#F8FAFC";
                   return (
                     <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
-                      <td style={{ padding:"8px 10px", textAlign:"center", color:C.gray4, fontSize:11, whiteSpace:"nowrap" }}>{p.number||"—"}</td>
-                      <td style={{ padding:"8px 10px", fontWeight:500, color:C.gray7, minWidth:140 }}>{p.name}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center", color:C.gray6 }}>{empCount}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{stuCount}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{sH>0?`${sH}h`:"—"}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center", color:C.blue, fontWeight:500 }}>{wH>0?`${wH}h`:"—"}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center", fontWeight:700, color:C.blue }}>{h}h</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center", color:rate>0?C.gray6:C.gray3, fontSize:11 }}>{rate>0?`${rate.toFixed(2)} zł`:"—"}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:700, color:rev>0?"#1F7A4C":C.gray3, whiteSpace:"nowrap" }}>{rev>0?`${fmt(rev)} zł`:"—"}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:forecast>0?"#3DAA70":C.gray3, whiteSpace:"nowrap" }}>{forecast>0?`${fmt(forecast)} zł`:"—"}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"right", color:"#3DAA70", fontSize:11 }}>{fSH>0?`${Math.round((sH+fSH)*100)/100}h`:"—"}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"right", color:C.blue, fontSize:11 }}>{fWH>0?`${Math.round((wH+fWH)*100)/100}h`:"—"}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:11 }}>{fH>0?`${Math.round((h+fH)*100)/100}h`:"—"}</td>
-                      <td style={{ padding:"8px 10px" }}>
-                        <div style={{ display:"flex", alignItems:"center", gap:5 }}>
-                          <div style={{ flex:1, height:5, background:C.gray2, borderRadius:3 }}>
-                            <div style={{ height:"100%", width:`${pct}%`, background:"#3DAA70", borderRadius:3 }}/>
+                      <td style={{ padding:"5px 4px", textAlign:"center", color:C.gray4, fontSize:10, whiteSpace:"nowrap" }}>{p.number||"—"}</td>
+                      <td style={{ padding:"5px 5px", fontWeight:500, color:C.gray7, minWidth:100 }}>{p.name}</td>
+                      <td style={{ padding:"5px 4px", textAlign:"center", color:C.gray6, fontSize:10 }}>{empCount}</td>
+                      <td style={{ padding:"5px 4px", textAlign:"center", color:"#3DAA70", fontWeight:500, fontSize:10 }}>{stuCount}</td>
+                      <td style={{ padding:"5px 4px", textAlign:"center", color:"#3DAA70", fontWeight:500, fontSize:10 }}>{sH>0?`${sH}h`:"—"}</td>
+                      <td style={{ padding:"5px 4px", textAlign:"center", color:C.blue, fontWeight:500, fontSize:10 }}>{wH>0?`${wH}h`:"—"}</td>
+                      <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:C.blue, fontSize:10 }}>{h}h</td>
+                      <td style={{ padding:"5px 4px", textAlign:"center", color:rate>0?C.gray6:C.gray3, fontSize:10 }}>{rate>0?`${rate.toFixed(2)}`:"—"}</td>
+                      <td style={{ padding:"5px 4px", textAlign:"right", fontWeight:600, color:rev>0?"#1F7A4C":C.gray3, fontSize:10 }}>{rev>0?fmt(rev):"—"}</td>
+                      <td style={{ padding:"5px 4px", textAlign:"right", color:(kartony||0)>0?"#E07B20":C.gray3, fontWeight:500, fontSize:10 }} title={(kartony||0)>0&&(pieceRate||0)>0?`${(pieceRate||0).toFixed(4)} zł/szt`:undefined}>{(kartony||0)>0?fmtInt(kartony):"—"}</td>
+                      <td style={{ padding:"5px 4px", textAlign:"right", fontWeight:600, color:(revAkord||0)>0?"#B85C00":C.gray3, fontSize:10 }}>{(revAkord||0)>0?fmt(revAkord):"—"}</td>
+                      <td style={{ padding:"5px 4px", textAlign:"right", fontWeight:600, color:(forecastTotal||0)>0?"#3DAA70":C.gray3, fontSize:10 }}>{(forecastTotal||0)>0?fmt(forecastTotal):"—"}</td>
+                      <td style={{ padding:"5px 4px", textAlign:"right", color:C.gray6, fontSize:10 }}>{(h+(fH||0))>0?`${Math.round((h+(fH||0))*100)/100}h`:"—"}</td>
+                      <td style={{ padding:"5px 3px" }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+                          <div style={{ flex:1, height:4, background:C.gray2, borderRadius:2 }}>
+                            <div style={{ height:"100%", width:`${pct}%`, background:"#3DAA70", borderRadius:2 }}/>
                           </div>
-                          <span style={{ fontSize:10, color:C.gray5, minWidth:26 }}>{pct}%</span>
+                          <span style={{ fontSize:9, color:C.gray5, minWidth:22 }}>{pct}%</span>
                         </div>
                       </td>
                     </tr>
@@ -2050,23 +2050,20 @@ export default function App() {
                 })}
                 {projRows.length>0&&(
                   <tr style={{ background:C.gray2, borderTop:`2px solid ${C.gray3}`, fontWeight:700 }}>
-                    <td style={{ padding:"9px 10px", color:C.gray5 }}>—</td>
-                    <td style={{ padding:"9px 10px", color:C.gray7, fontWeight:700 }}>RAZEM</td>
-                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray6 }}>{activeEmps.length}</td>
-                    <td style={{ padding:"9px 10px", textAlign:"center", color:"#3DAA70" }}>{activeStudents}</td>
-                    <td style={{ padding:"9px 10px", textAlign:"center", color:"#3DAA70" }}>{studentH}h</td>
-                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.blue }}>{workerH}h</td>
-                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.blue }}>{totalAllH}h</td>
-                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
-                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#1F7A4C", fontSize:13 }}>{fmt(totalRevenueH)} zł</td>
-                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#E07B20", fontSize:12, fontWeight:600 }}>{totalKartony>0?`${fmtInt(totalKartony)} szt.`:"—"}</td>
-                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
-                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#B85C00", fontSize:12, fontWeight:600 }}>{totalRevAkord>0?`${fmt(totalRevAkord)} zł`:"—"}</td>
-                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:13 }}>{fmt(totalForecast)} zł</td>
-                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.sH+(r.fSH||0),0)*100)/100}h</td>
-                    <td style={{ padding:"9px 10px", textAlign:"right", color:C.blue, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.wH+(r.fWH||0),0)*100)/100}h</td>
-                    <td style={{ padding:"9px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.h+(r.fH||0),0)*100)/100}h</td>
-                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>{stuPct}%</td>
+                    <td style={{ padding:"6px 4px", color:C.gray5, fontSize:10 }}>—</td>
+                    <td style={{ padding:"6px 5px", color:C.gray7, fontWeight:700, fontSize:11 }}>RAZEM</td>
+                    <td style={{ padding:"6px 4px", textAlign:"center", color:C.gray6, fontSize:10 }}>{activeEmps.length}</td>
+                    <td style={{ padding:"6px 4px", textAlign:"center", color:"#3DAA70", fontSize:10 }}>{activeStudents}</td>
+                    <td style={{ padding:"6px 4px", textAlign:"center", color:"#3DAA70", fontSize:10 }}>{studentH}h</td>
+                    <td style={{ padding:"6px 4px", textAlign:"center", color:C.blue, fontSize:10 }}>{workerH}h</td>
+                    <td style={{ padding:"6px 4px", textAlign:"center", color:C.blue, fontSize:10 }}>{totalAllH}h</td>
+                    <td style={{ padding:"6px 4px", textAlign:"center", color:C.gray5, fontSize:10 }}>—</td>
+                    <td style={{ padding:"6px 4px", textAlign:"right", color:"#1F7A4C", fontSize:10, fontWeight:700 }}>{fmt(totalRevenueH)}</td>
+                    <td style={{ padding:"6px 4px", textAlign:"right", color:"#E07B20", fontSize:10, fontWeight:600 }}>{totalKartony>0?fmtInt(totalKartony):"—"}</td>
+                    <td style={{ padding:"6px 4px", textAlign:"right", color:"#B85C00", fontSize:10, fontWeight:600 }}>{totalRevAkord>0?fmt(totalRevAkord):"—"}</td>
+                    <td style={{ padding:"6px 4px", textAlign:"right", color:"#3DAA70", fontSize:10, fontWeight:700 }}>{fmt(totalForecast)}</td>
+                    <td style={{ padding:"6px 4px", textAlign:"right", color:C.gray6, fontSize:10 }}>{Math.round(projRows.reduce((s,r)=>s+r.h+(r.fH||0),0)*100)/100}h</td>
+                    <td style={{ padding:"6px 4px", textAlign:"center", color:C.gray5, fontSize:10 }}>{stuPct}%</td>
                   </tr>
                 )}
               </tbody>
