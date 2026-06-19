@@ -691,7 +691,16 @@ export default function App() {
       const pDowH=[0,0,0,0,0,0,0],pDowC=[0,0,0,0,0,0,0];
       const pDowSH=[0,0,0,0,0,0,0],pDowSC=[0,0,0,0,0,0,0];
       const pDowWH=[0,0,0,0,0,0,0],pDowWC=[0,0,0,0,0,0,0];
-      for(let d=1;d<=daysPassed;d++){
+      // Tylko zamknięte tygodnie kalendarzowe (pon–niedz)
+      const lastSun = (() => {
+        const cur = new Date(year, month, daysPassed);
+        const d = cur.getDay(); // 0=niedz,1=pon,...,6=sob
+        const daysBack = d === 0 ? 0 : d; // cofnij do ostatniej niedzieli
+        const sun = new Date(cur); sun.setDate(cur.getDate() - daysBack);
+        if (sun.getMonth() !== month || sun.getFullYear() !== year) return 0;
+        return sun.getDate();
+      })();
+      for(let d=1;d<=lastSun;d++){
         const dow=new Date(year,month,d).getDay();
         const dh=dayTotal(p.id,d); if(dh>0){pDowH[dow]+=dh;pDowC[dow]++;}
         const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
@@ -774,7 +783,16 @@ export default function App() {
       const pDowH=[0,0,0,0,0,0,0],pDowC=[0,0,0,0,0,0,0];
       const pDowSH=[0,0,0,0,0,0,0],pDowSC=[0,0,0,0,0,0,0];
       const pDowWH=[0,0,0,0,0,0,0],pDowWC=[0,0,0,0,0,0,0];
-      for(let d=1;d<=daysPassed;d++){
+      // Tylko zamknięte tygodnie kalendarzowe (pon–niedz)
+      const lastSun = (() => {
+        const cur = new Date(year, month, daysPassed);
+        const d = cur.getDay(); // 0=niedz,1=pon,...,6=sob
+        const daysBack = d === 0 ? 0 : d; // cofnij do ostatniej niedzieli
+        const sun = new Date(cur); sun.setDate(cur.getDate() - daysBack);
+        if (sun.getMonth() !== month || sun.getFullYear() !== year) return 0;
+        return sun.getDate();
+      })();
+      for(let d=1;d<=lastSun;d++){
         const dow=new Date(year,month,d).getDay();
         const dh=dayTotal(p.id,d); if(dh>0){pDowH[dow]+=dh;pDowC[dow]++;}
         const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
@@ -1759,7 +1777,16 @@ export default function App() {
             const pDowH  = [0,0,0,0,0,0,0]; const pDowC  = [0,0,0,0,0,0,0];
             const pDowSH = [0,0,0,0,0,0,0]; const pDowSC = [0,0,0,0,0,0,0];
             const pDowWH = [0,0,0,0,0,0,0]; const pDowWC = [0,0,0,0,0,0,0];
-            for (let d=1;d<=daysPassed;d++){
+            // Tylko zamknięte tygodnie kalendarzowe (pon–niedz)
+            const lastSunR = (() => {
+              const cur = new Date(year, month, daysPassed);
+              const d = cur.getDay();
+              const daysBack = d === 0 ? 0 : d;
+              const sun = new Date(cur); sun.setDate(cur.getDate() - daysBack);
+              if (sun.getMonth() !== month || sun.getFullYear() !== year) return 0;
+              return sun.getDate();
+            })();
+            for (let d=1;d<=lastSunR;d++){
               const dow=new Date(year,month,d).getDay();
               const dh=dayTotal(p.id,d);
               if(dh>0){ pDowH[dow]+=dh; pDowC[dow]++; }
