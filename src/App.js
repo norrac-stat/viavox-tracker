@@ -674,33 +674,64 @@ export default function App() {
 
   // ── Export ────────────────────────────────────────────────────────────────
   function exportReportCSV(projRows, totalRevenue, forecastRev, monthName) {
-    const rows = [["Nr","Projekt","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie","Stawka","Przychód","Prognoza","Akord szt.","Prog. Akord szt.","% UZS"]];
+    const rows = [[
+      "Nr","Projekt","Prac.","UZS",
+      "Godz. UZS","Godz. UZSO","Łącznie",
+      "Stawka","Przychód","Prognoza",
+      "Akord szt.","Prog. Akord szt.",
+      "Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS"
+    ]];
+
     projRows.forEach(r => {
-      const pr = r.p;
       const pct = r.h>0 ? Math.round((r.sH/r.h)*100) : 0;
-      const totalRev = Math.round((r.rev + r.pieceRev)*100)/100;
+      const totalRev = Math.round((r.rev + (r.pieceRev||0))*100)/100;
       const totalFc  = Math.round(((r.forecast||0) + (r.pieceForecast||0))*100)/100;
-      const pieceR   = r.p ? window.__pieceRates?.[r.p.id] : null;
-      const fQty     = pieceR && pieceR.rate>0 ? Math.round(((r.pieceForecast||0)-(r.pieceRev||0))/pieceR.rate) : 0;
+      const pieceRateObj = pieceRates[r.p.id];
+      const fQty = pieceRateObj && pieceRateObj.rate>0
+        ? Math.round(((r.pieceForecast||0)-(r.pieceRev||0))/pieceRateObj.rate) : 0;
+      const progUZS   = r.fSH>0 ? Math.round((r.sH+r.fSH)*100)/100 : "—";
+      const progUZSO  = r.fWH>0 ? Math.round((r.wH+r.fWH)*100)/100 : "—";
+      const progTotal = r.fH>0  ? Math.round((r.h+r.fH)*100)/100   : "—";
+
       rows.push([
-        pr.number||"", pr.name,
-        r.empCount, r.stuCount,
-        r.sH, r.wH, r.h,
-        r.rate||"—",
-        totalRev, totalFc,
-        r.pieceQty>0 ? Math.round(r.pieceQty) : "—",
+        r.p.number||"",
+        r.p.name,
+        r.empCount,
+        r.stuCount,
+        r.sH||"—",
+        r.wH||"—",
+        r.h||"—",
+        r.rate ? r.rate+" zł" : "—",
+        totalRev ? totalRev+" zł" : "—",
+        totalFc  ? totalFc+" zł"  : "—",
+        (r.pieceQty||0)>0 ? Math.round(r.pieceQty) : "—",
         r.pieceForecast>0 ? Math.round((r.pieceQty||0)+fQty) : "—",
+        progUZS,
+        progUZSO,
+        progTotal,
         pct+"%"
       ]);
     });
-    rows.push(["—","RAZEM","","","","","","",
-      Math.round(totalRevenue*100)/100,
-      Math.round(forecastRev*100)/100,"","",""]);
+
+    // RAZEM row
+    rows.push([
+      "—","RAZEM",
+      projRows.reduce((s,r)=>s+r.empCount,0),
+      projRows.reduce((s,r)=>s+r.stuCount,0),
+      Math.round(projRows.reduce((s,r)=>s+r.sH,0)*100)/100,
+      Math.round(projRows.reduce((s,r)=>s+r.wH,0)*100)/100,
+      Math.round(projRows.reduce((s,r)=>s+r.h,0)*100)/100,
+      "—",
+      Math.round(totalRevenue*100)/100+" zł",
+      Math.round(forecastRev*100)/100+" zł",
+      "—","—","—","—","—","—"
+    ]);
 
     const csv = rows.map(r => r.map(v => {
       const s = String(v);
-      return s.includes(",") ? '"'+s.replace(/"/g,'""')+'"' : s;
-    }).join(",")).join("\r\n");
+      return (s.includes(",") || s.includes(";")) ? '"'+s.replace(/"/g,'""')+'"' : s;
+    }).join(";")).join("\r\n");
+
     const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
