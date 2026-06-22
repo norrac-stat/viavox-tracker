@@ -260,40 +260,23 @@ export default function App() {
 
       const accumulated = {};
 
-      // Use RPC to bypass row limit
-      const { data: rpcData, error: rpcError } = await supabase
-        .rpc("get_hours_for_month", { p_from: from, p_to: to });
+      // Paginated RPC calls to bypass row limit
+      const PAGE = 1000;
+      let from_idx = 0;
+      while (true) {
+        const { data: rpcData, error: rpcError } = await supabase
+          .rpc("get_hours_for_month", { p_from: from, p_to: to })
+          .range(from_idx, from_idx + PAGE - 1);
 
-      if (!rpcError && rpcData && rpcData.length > 0) {
+        if (rpcError || !rpcData || rpcData.length === 0) break;
+
         for (const row of rpcData) {
-          // Filter by manager's projects if not admin
           if (myProjIds !== null && !myProjIds.includes(row.project_id)) continue;
-          // Normalize date to YYYY-MM-DD (RPC may return full ISO string)
           const dateKey = String(row.work_date).substring(0, 10);
           accumulated[`${row.project_id}|${row.employee_id}|${dateKey}`] = String(row.hours);
         }
-        setHoursMap(accumulated);
-        return;
-      }
 
-      // Fallback: paginated fetch if RPC not available
-      const PAGE = 2000;
-      let from_idx = 0;
-      while (true) {
-        let q = supabase.from("hours")
-          .select("project_id,employee_id,work_date,hours")
-          .gte("work_date", from)
-          .lte("work_date", to)
-          .range(from_idx, from_idx + PAGE - 1);
-        if (myProjIds !== null && myProjIds.length <= 50) {
-          q = q.in("project_id", myProjIds);
-        }
-        const { data, error } = await q;
-        if (error || !data || data.length === 0) break;
-        for (const row of data) {
-          accumulated[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.hours);
-        }
-        if (data.length < PAGE) break;
+        if (rpcData.length < PAGE) break;
         from_idx += PAGE;
       }
       setHoursMap(accumulated);
