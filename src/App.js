@@ -128,19 +128,18 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [managers,   setManagers]   = useState([]);
   const [rates,      setRates]      = useState({});
-  const [pieceRates, setPieceRates] = useState({}); // key: project_id → {rate,unit}
+  const [pieceRates, setPieceRates] = useState({}); // project_id -> {rate, unit}
+  const [pieceMap,   setPieceMap]   = useState({}); // projId|empId|date -> quantity
   const [reportSortCol, setReportSortCol] = useState('rev');
   const [reportSortDir, setReportSortDir] = useState('desc');
   const [employees,  setEmployees]  = useState([]);
   const [projects,   setProjects]   = useState([]);
   const [mgrProjects,setMgrProjects]= useState([]); // manager_projects rows
   const [hoursMap,   setHoursMap]   = useState({}); // key: projId|empId|date → hours value
-  const [akordMap,   setAkordMap]   = useState({}); // key: projId|empId|date → kartony
 
   const [loading,    setLoading]    = useState(true);
   const [saving,     setSaving]     = useState(false);
   const saveTimer = useRef({});
-  const saveTimerAkord = useRef({});
 
   const now = new Date();
   const [year,  setYear]  = useState(now.getFullYear());
@@ -204,6 +203,7 @@ export default function App() {
             setRates(ratesMap);
           });
       } catch(e) {}
+
       try {
         supabase.from("piece_rates").select("project_id,rate,unit")
           .then(({ data: prs }) => {
@@ -216,6 +216,32 @@ export default function App() {
     }
     loadAll();
   }, []);
+
+  // ── Load piece work for current month ───────────────────────────────────
+  useEffect(() => {
+    if (!currentManager || projects.length === 0) return;
+    async function loadPieceWork() {
+      const from = toDateStr(year, month, 1);
+      const to   = toDateStr(year, month, daysInMonth(year, month));
+      const map  = {};
+      const PAGE = 1000;
+      let idx = 0;
+      while (true) {
+        const { data, error } = await supabase.from("piece_work")
+          .select("project_id,employee_id,work_date,quantity")
+          .gte("work_date", from).lte("work_date", to)
+          .range(idx, idx + PAGE - 1);
+        if (error || !data || data.length === 0) break;
+        for (const row of data) {
+          map[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.quantity);
+        }
+        if (data.length < PAGE) break;
+        idx += PAGE;
+      }
+      setPieceMap(map);
+    }
+    loadPieceWork();
+  }, [currentManager, year, month, projects]);
 
   // ── Load hours for current month (with pagination) ───────────────────────
   useEffect(() => {
@@ -282,7 +308,8 @@ export default function App() {
         .filter(k => k.startsWith(activeProj + "|"))
         .map(k => k.split("|")[1])
     );
-    if (empIdsWithHours.size === 0) return employees;
+    // Jeśli brak godzin dla projektu — pokaż pustą listę (nie wszystkich)
+    if (empIdsWithHours.size === 0) return [];
     return employees.filter(e => empIdsWithHours.has(e.id));
   }, [employees, activeProj, hoursMap]);
 
@@ -320,6 +347,19 @@ export default function App() {
   const isAdmin = currentManager?.is_admin;
 
   // ── Hours helpers ─────────────────────────────────────────────────────────
+  function getPW(projId, empId, day) {
+    const key = `${projId}|${empId}|${toDateStr(year, month, day)}`;
+    return pieceMap[key] ?? "";
+  }
+  function getPWDay(projId, day) {
+    return employees.reduce((s,e) => s + (parseFloat(getPW(projId,e.id,day))||0), 0);
+  }
+  function getPWTotal(projId) {
+    let s = 0;
+    for (let d=1; d<=daysInMonth(year,month); d++) s += getPWDay(projId, d);
+    return Math.round(s*100)/100;
+  }
+
   function getH(projId, empId, day) {
     const key = `${projId}|${empId}|${toDateStr(year, month, day)}`;
     return hoursMap[key] ?? "";
@@ -344,6 +384,22 @@ export default function App() {
         }, { onConflict: "project_id,employee_id,work_date" });
       }
     }, 600);
+  }
+
+  async function savePieceWork(projId, empId, day, val) {
+    const date_str = toDateStr(year, month, day);
+    const key = `${projId}|${empId}|${date_str}`;
+    const qty = parseFloat(val);
+    if (val === "" || isNaN(qty)) {
+      await supabase.from("piece_work").delete()
+        .eq("employee_id", empId).eq("project_id", projId).eq("work_date", date_str);
+      setPieceMap(prev => { const n={...prev}; delete n[key]; return n; });
+    } else {
+      await supabase.from("piece_work").upsert({
+        employee_id: empId, project_id: projId, work_date: date_str, quantity: qty
+      }, { onConflict: "employee_id,project_id,work_date" });
+      setPieceMap(prev => ({ ...prev, [key]: String(qty) }));
+    }
   }
 
   // Pre-compute all totals from hoursMap in one pass — much faster than calling per cell
@@ -407,7 +463,7 @@ export default function App() {
   }
   function logout() {
     setCurrentManager(null); setPinInput(""); setSelMgrId("");
-    setLoginError(""); setTab("timesheet"); setHoursMap({}); setAkordMap({});
+    setLoginError(""); setTab("timesheet"); setHoursMap({});
     try { sessionStorage.removeItem("vv_manager"); } catch {}
   }
 
@@ -609,8 +665,7 @@ export default function App() {
       return s;
     }).join(","));
     const csv = csvLines.join("\r\n");
-    const bom = "\uFEFF";
-    const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
+        const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href = url; a.download = `VIAVOX_${monthName}_${year}.csv`;
@@ -669,326 +724,12 @@ export default function App() {
       ws['!cols'] = [{wch:18},{wch:14},{wch:12},{wch:8},
         ...Array(numDays).fill({wch:5}),{wch:8}];
       XLSX.utils.book_append_sheet(wb, ws,
-        ((proj.number ? `[${proj.number}] ` : '') + proj.name)
-          .replace(/[:\\\/\?\*\[\]]/g, '')
-          .substring(0, 31));
+        ((proj.number ? `[${proj.number}] ` : '') + proj.name).substring(0,31));
     });
 
     if (wb.SheetNames.length === 0) { showToast("Brak danych do eksportu","err"); return; }
     XLSX.writeFile(wb, `VIAVOX_${monthName}_${year}.xlsx`);
     showToast(`Pobrano: VIAVOX_${monthName}_${year}.xlsx`);
-  }
-
-
-  // ── Export Raport (tabela projektów) ─────────────────────────────────────
-  function exportReportToExcel() {
-    const XLSX = window.XLSX;
-    if (!XLSX) { exportReportToCSV(); return; }
-    const monthName = MONTHS[month];
-    const today     = new Date();
-    const daysTotal = daysInMonth(year, month);
-    const daysPassed = (year===today.getFullYear()&&month===today.getMonth()) ? today.getDate() : daysTotal;
-    const studentEmps = employees.filter(e=>e.is_student);
-    const workerEmps  = employees.filter(e=>!e.is_student);
-    const getRate = (p) => (p&&p.number&&rates&&rates[p.number]) ? Number(rates[p.number]) : 0;
-    const projRev = (p) => Math.round(projTotal(p.id)*getRate(p)*100)/100;
-    const projRows = [...myProjects].map(p => {
-      const h=projTotal(p.id), rate=getRate(p), rev=projRev(p);
-      const sH=Math.round(studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
-      const wH=Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
-      const empCount=employees.filter(e=>empTotal(p.id,e.id)>0).length;
-      const stuCount=studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
-      const pDowH=[0,0,0,0,0,0,0],pDowC=[0,0,0,0,0,0,0];
-      const pDowSH=[0,0,0,0,0,0,0],pDowSC=[0,0,0,0,0,0,0];
-      const pDowWH=[0,0,0,0,0,0,0],pDowWC=[0,0,0,0,0,0,0];
-      // Tylko zamknięte tygodnie kalendarzowe (pon–niedz)
-      const lastSun = (() => {
-        const cur = new Date(year, month, daysPassed);
-        const d = cur.getDay(); // 0=niedz,1=pon,...,6=sob
-        const daysBack = d === 0 ? 0 : d; // cofnij do ostatniej niedzieli
-        const sun = new Date(cur); sun.setDate(cur.getDate() - daysBack);
-        if (sun.getMonth() !== month || sun.getFullYear() !== year) return 0;
-        return sun.getDate();
-      })();
-      for(let d=1;d<=lastSun;d++){
-        const dow=new Date(year,month,d).getDay();
-        const dh=dayTotal(p.id,d); if(dh>0){pDowH[dow]+=dh;pDowC[dow]++;}
-        const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
-        if(dsh>0){pDowSH[dow]+=dsh;pDowSC[dow]++;}
-        const dwh=workerEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
-        if(dwh>0){pDowWH[dow]+=dwh;pDowWC[dow]++;}
-      }
-      const pDowAvg=pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
-      const pDowAvgS=pDowSH.map((hh,i)=>pDowSC[i]>0?hh/pDowSC[i]:0);
-      const pDowAvgW=pDowWH.map((hh,i)=>pDowWC[i]>0?hh/pDowWC[i]:0);
-      let fH=0,fSH=0,fWH=0;
-      for(let d=daysPassed+1;d<=daysTotal;d++){
-        const dow=new Date(year,month,d).getDay();
-        fH+=pDowAvg[dow]; fSH+=pDowAvgS[dow]; fWH+=pDowAvgW[dow];
-      }
-      fH=Math.round(fH*100)/100; fSH=Math.round(fSH*100)/100; fWH=Math.round(fWH*100)/100;
-      const forecast=rate>0?Math.round((rev+fH*rate)*100)/100:0;
-      return {p,h,rate,rev,sH,wH,empCount,stuCount,forecast,fSH,fWH,fH};
-    }).filter(r=>r.h>0).sort((a,b)=>b.rev-a.rev);
-    if (projRows.length===0){showToast("Brak danych do eksportu","err");return;}
-    const wb=XLSX.utils.book_new();
-    const fmt2=(n)=>Math.round(Number(n)*100)/100;
-    const header=["Nr","Projekt","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie","Stawka (zł)","Przychód (zł)","Prognoza (zł)","Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS"];
-    const dataRows=projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH})=>[
-      p.number||"",p.name,empCount,stuCount,fmt2(sH),fmt2(wH),fmt2(h),
-      rate>0?fmt2(rate):"",rev>0?fmt2(rev):"",forecast>0?fmt2(forecast):"",
-      sH+fSH>0?fmt2(sH+fSH):"",wH+fWH>0?fmt2(wH+fWH):"",h+fH>0?fmt2(h+fH):"",h>0?Math.round((sH/h)*100):0
-    ]);
-    const totalH=fmt2(projRows.reduce((s,r)=>s+r.h,0));
-    const totalSH=fmt2(projRows.reduce((s,r)=>s+r.sH,0));
-    const totalWH=fmt2(projRows.reduce((s,r)=>s+r.wH,0));
-    const totalRev=fmt2(projRows.reduce((s,r)=>s+r.rev,0));
-    const totalFc=fmt2(projRows.reduce((s,r)=>s+r.forecast,0));
-    const totalPSH=fmt2(projRows.reduce((s,r)=>s+r.sH+r.fSH,0));
-    const totalPWH=fmt2(projRows.reduce((s,r)=>s+r.wH+r.fWH,0));
-    const totalPH=fmt2(projRows.reduce((s,r)=>s+r.h+r.fH,0));
-    const stuPct=totalH>0?Math.round((totalSH/totalH)*100):0;
-    const activeEmpCount=employees.filter(e=>myProjects.some(p=>empTotal(p.id,e.id)>0)).length;
-    const activeStuCount=employees.filter(e=>e.is_student&&myProjects.some(p=>empTotal(p.id,e.id)>0)).length;
-    const sumRow=["","RAZEM",activeEmpCount,activeStuCount,totalSH,totalWH,totalH,"",totalRev,totalFc,totalPSH,totalPWH,totalPH,stuPct];
-    const ws1=XLSX.utils.aoa_to_sheet([header,...dataRows,sumRow]);
-    ws1["!cols"]=[{wch:8},{wch:28},{wch:7},{wch:7},{wch:11},{wch:12},{wch:10},{wch:13},{wch:14},{wch:14},{wch:12},{wch:13},{wch:13},{wch:8}];
-    XLSX.utils.book_append_sheet(wb, ws1, `Raport ${monthName} ${year}`.substring(0,31));
-    const WORKING_DAYS={"2026-1":22,"2026-2":20,"2026-3":20,"2026-4":21,"2026-5":21,"2026-6":20,"2026-7":23,"2026-8":20,"2026-9":22,"2026-10":22,"2026-11":20,"2026-12":20};
-    const workingDaysTotal=WORKING_DAYS[`${year}-${month+1}`]||daysTotal;
-    const workingDaysPassed=daysPassed>=daysTotal?workingDaysTotal:Math.round((daysPassed/daysTotal)*workingDaysTotal);
-    const dailyAvg=workingDaysPassed>0?fmt2(totalRev/workingDaysPassed):0;
-    const totalAllH=fmt2(myProjects.reduce((s,p)=>s+projTotal(p.id),0));
-    const studentH=fmt2(myProjects.reduce((s,p)=>s+studentEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0));
-    const workerH=fmt2(myProjects.reduce((s,p)=>s+workerEmps.reduce((s2,e)=>s2+empTotal(p.id,e.id),0),0));
-    const ws2=XLSX.utils.aoa_to_sheet([
-      [`Raport miesięczny — ${monthName} ${year}`],[],["Wskaźnik","Wartość"],
-      ["Miesiąc",`${monthName} ${year}`],["Dzień raportu",`${daysPassed}/${daysTotal}`],
-      ["Aktywne projekty",projRows.length],["Aktywni pracownicy",activeEmpCount],["w tym UZS (studenci)",activeStuCount],[],
-      ["Godziny łącznie",totalAllH],["Godziny UZS",studentH],["Godziny UZSO",workerH],
-      ["% UZS",`${totalH>0?Math.round((studentH/totalH)*100):0}%`],[],
-      ["Przychód (do teraz)",totalRev],["Śr. dzienna przychód",dailyAvg],
-      ["Prognoza przychodu (cały miesiąc)",totalFc],["Prognoza godzin łącznie",totalPH],
-    ]);
-    ws2["!cols"]=[{wch:36},{wch:20}];
-    XLSX.utils.book_append_sheet(wb, ws2, "KPI");
-    XLSX.writeFile(wb, `VIAVOX_Raport_${monthName}_${year}.xlsx`);
-    showToast(`Pobrano: VIAVOX_Raport_${monthName}_${year}.xlsx`);
-  }
-
-  function exportReportToCSV() {
-    const monthName=MONTHS[month];
-    const today=new Date();
-    const daysTotal=daysInMonth(year,month);
-    const daysPassed=(year===today.getFullYear()&&month===today.getMonth())?today.getDate():daysTotal;
-    const studentEmps=employees.filter(e=>e.is_student);
-    const workerEmps=employees.filter(e=>!e.is_student);
-    const getRate=(p)=>(p&&p.number&&rates&&rates[p.number])?Number(rates[p.number]):0;
-    const projRows=[...myProjects].map(p=>{
-      const h=projTotal(p.id),rate=getRate(p),rev=Math.round(h*rate*100)/100;
-      const sH=Math.round(studentEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
-      const wH=Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
-      const empCount=employees.filter(e=>empTotal(p.id,e.id)>0).length;
-      const stuCount=studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
-      const pDowH=[0,0,0,0,0,0,0],pDowC=[0,0,0,0,0,0,0];
-      const pDowSH=[0,0,0,0,0,0,0],pDowSC=[0,0,0,0,0,0,0];
-      const pDowWH=[0,0,0,0,0,0,0],pDowWC=[0,0,0,0,0,0,0];
-      // Tylko zamknięte tygodnie kalendarzowe (pon–niedz)
-      const lastSun = (() => {
-        const cur = new Date(year, month, daysPassed);
-        const d = cur.getDay(); // 0=niedz,1=pon,...,6=sob
-        const daysBack = d === 0 ? 0 : d; // cofnij do ostatniej niedzieli
-        const sun = new Date(cur); sun.setDate(cur.getDate() - daysBack);
-        if (sun.getMonth() !== month || sun.getFullYear() !== year) return 0;
-        return sun.getDate();
-      })();
-      for(let d=1;d<=lastSun;d++){
-        const dow=new Date(year,month,d).getDay();
-        const dh=dayTotal(p.id,d); if(dh>0){pDowH[dow]+=dh;pDowC[dow]++;}
-        const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
-        if(dsh>0){pDowSH[dow]+=dsh;pDowSC[dow]++;}
-        const dwh=workerEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
-        if(dwh>0){pDowWH[dow]+=dwh;pDowWC[dow]++;}
-      }
-      const pDowAvg=pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
-      let fH=0,fSH=0,fWH=0;
-      for(let d=daysPassed+1;d<=daysTotal;d++){
-        const dow=new Date(year,month,d).getDay();
-        fH+=pDowAvg[dow];
-        fSH+=pDowSH.map((hh,i)=>pDowSC[i]>0?hh/pDowSC[i]:0)[dow];
-        fWH+=pDowWH.map((hh,i)=>pDowWC[i]>0?hh/pDowWC[i]:0)[dow];
-      }
-      fH=Math.round(fH*100)/100; fSH=Math.round(fSH*100)/100; fWH=Math.round(fWH*100)/100;
-      const forecast=rate>0?Math.round((rev+fH*rate)*100)/100:0;
-      return {p,h,rate,rev,sH,wH,empCount,stuCount,forecast,fSH,fWH,fH};
-    }).filter(r=>r.h>0).sort((a,b)=>b.rev-a.rev);
-    if(projRows.length===0){showToast("Brak danych do eksportu","err");return;}
-    const rows=[
-      ["Nr","Projekt","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie","Stawka","Przychód","Prognoza","Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS"],
-      ...projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH})=>[
-        p.number||"",p.name,empCount,stuCount,sH,wH,h,
-        rate>0?rate:"",rev>0?rev:"",forecast>0?forecast:"",
-        sH+fSH>0?Math.round((sH+fSH)*100)/100:"",
-        wH+fWH>0?Math.round((wH+fWH)*100)/100:"",
-        h+fH>0?Math.round((h+fH)*100)/100:"",
-        h>0?`${Math.round((sH/h)*100)}%`:"",
-      ])
-    ];
-    const bom="﻿";
-    const csv=rows.map(r=>r.map(v=>{const s=String(v);return s.includes(",")||s.includes("\n")?'"'+s.replace(/"/g,'""')+'"':s;}).join(",")).join("\r\n");
-    const blob=new Blob([bom+csv],{type:"text/csv;charset=utf-8;"});
-    const url=URL.createObjectURL(blob); const a=document.createElement("a");
-    a.href=url; a.download=`VIAVOX_Raport_${monthName}_${year}.csv`;
-    a.click(); URL.revokeObjectURL(url);
-    showToast(`Pobrano: VIAVOX_Raport_${monthName}_${year}.csv`);
-  }
-
-  // ── Load akord (piece_work) for current month ────────────────────────────
-  useEffect(() => {
-    if (!currentManager) return;
-    if (projects.length === 0) return;
-    async function loadAkord() {
-      const from = toDateStr(year, month, 1);
-      const to   = toDateStr(year, month, daysInMonth(year, month));
-      const myProjIds = currentManager.is_admin
-        ? projects.map(p => p.id)
-        : mgrProjects.filter(mp => mp.manager_id === currentManager.id).map(mp => mp.project_id);
-      if (myProjIds.length === 0) return;
-      const map = {};
-      const PAGE = 1000;
-      let from_idx = 0;
-      while (true) {
-        let q = supabase.from("piece_work")
-          .select("project_id,employee_id,work_date,quantity")
-          .gte("work_date", from)
-          .lte("work_date", to)
-          .range(from_idx, from_idx + PAGE - 1);
-        if (!currentManager.is_admin && myProjIds.length <= 20) {
-          q = q.in("project_id", myProjIds);
-        }
-        const { data, error } = await q;
-        if (error || !data || data.length === 0) break;
-        for (const row of data) {
-          map[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.quantity);
-        }
-        if (data.length < PAGE) break;
-        from_idx += PAGE;
-      }
-      setAkordMap(map);
-    }
-    loadAkord();
-  }, [currentManager, year, month, projects, mgrProjects]);
-
-  // ── Akord state + helpers ─────────────────────────────────────────────────
-  const [akordProj, setAkordProj] = useState(null);
-  const [akordSearch, setAkordSearch] = useState("");
-
-  function getA(projId, empId, day) {
-    return akordMap[`${projId}|${empId}|${toDateStr(year, month, day)}`] ?? "";
-  }
-
-  function setA(projId, empId, day, val) {
-    const dateStr = toDateStr(year, month, day);
-    const key = `${projId}|${empId}|${dateStr}`;
-    setAkordMap(prev => ({ ...prev, [key]: val }));
-    if (saveTimerAkord.current[key]) clearTimeout(saveTimerAkord.current[key]);
-    saveTimerAkord.current[key] = setTimeout(async () => {
-      const num = parseInt(val);
-      if (val === "" || val === null) {
-        await supabase.from("piece_work").delete()
-          .eq("project_id", projId).eq("employee_id", empId).eq("work_date", dateStr);
-      } else if (!isNaN(num) && num >= 0) {
-        await supabase.from("piece_work").upsert({
-          project_id: projId, employee_id: empId,
-          work_date: dateStr, quantity: num,
-        }, { onConflict: "project_id,employee_id,work_date" });
-      }
-    }, 600);
-  }
-
-  const akordTotalsCache = useMemo(() => {
-    const empProj = {}, dayProj = {};
-    for (const [key, val] of Object.entries(akordMap)) {
-      const [projId, empId, dateStr] = key.split("|");
-      const mk = dateStr ? dateStr.substring(0,7) : "";
-      if (mk !== `${year}-${String(month+1).padStart(2,"0")}`) continue;
-      const u = parseInt(val) || 0;
-      if (u <= 0) continue;
-      const day = parseInt(dateStr.substring(8,10));
-      if (!empProj[projId]) empProj[projId] = {};
-      empProj[projId][empId] = (empProj[projId][empId] || 0) + u;
-      if (!dayProj[projId]) dayProj[projId] = {};
-      dayProj[projId][day] = (dayProj[projId][day] || 0) + u;
-    }
-    return { empProj, dayProj };
-  }, [akordMap, year, month]);
-
-  function empAkord(projId, empId) { return akordTotalsCache.empProj[projId]?.[empId] || 0; }
-  function dayAkord(projId, day)   { return akordTotalsCache.dayProj[projId]?.[day]   || 0; }
-  function projAkord(projId) {
-    return Object.values(akordTotalsCache.empProj[projId] || {}).reduce((s,v)=>s+v,0);
-  }
-
-  function exportAkordToExcel() {
-    const XLSX = window.XLSX;
-    if (!XLSX) { exportAkordToCSV(); return; }
-    const monthName = MONTHS[month];
-    const numDays   = daysInMonth(year, month);
-    const wb = XLSX.utils.book_new();
-    const projList = akordProj ? myProjects.filter(p=>p.id===akordProj) : myProjects;
-    projList.forEach(proj => {
-      const ep = akordTotalsCache.empProj[proj.id] || {};
-      const projEmps = employees.filter(e=>(ep[e.id]||0)>0);
-      if (projEmps.length === 0) return;
-      const header = ["Nazwisko","Imię","Student",
-        ...Array.from({length:numDays},(_,i)=>`${String(i+1).padStart(2,"0")}.${String(month+1).padStart(2,"0")}.${year}`),
-        "SUMA (szt.)"];
-      const rows = [header];
-      projEmps.forEach(emp => {
-        const vals = []; let suma = 0;
-        for (let d=1; d<=numDays; d++) {
-          const u = parseInt(akordMap[`${proj.id}|${emp.id}|${toDateStr(year,month,d)}`])||0;
-          vals.push(u>0?u:0); suma+=u;
-        }
-        rows.push([emp.last_name, emp.first_name, emp.is_student?"TAK":"NIE", ...vals, suma]);
-      });
-      const totals = ["SUMA DZIENNA","",""]; let grand=0;
-      for (let d=1; d<=numDays; d++) {
-        const t=projEmps.reduce((s,e)=>s+(parseInt(akordMap[`${proj.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
-        totals.push(t); grand+=t;
-      }
-      totals.push(grand); rows.push(totals);
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws["!cols"] = [{wch:18},{wch:14},{wch:8},...Array(numDays).fill({wch:6}),{wch:10}];
-      XLSX.utils.book_append_sheet(wb, ws,
-        ((proj.number?`[${proj.number}] `:"")+proj.name).replace(/[:\\/\?\*\[\]]/g,"").substring(0,31));
-    });
-    if (wb.SheetNames.length===0){showToast("Brak danych do eksportu","err");return;}
-    XLSX.writeFile(wb, `VIAVOX_Akord_${monthName}_${year}.xlsx`);
-    showToast(`Pobrano: VIAVOX_Akord_${monthName}_${year}.xlsx`);
-  }
-
-  function exportAkordToCSV() {
-    const monthName = MONTHS[month];
-    const numDays   = daysInMonth(year, month);
-    const rows = [["Projekt","Nr","Nazwisko","Imię","Student","Data","Kartony"]];
-    const projList = akordProj ? myProjects.filter(p=>p.id===akordProj) : myProjects;
-    projList.forEach(proj => {
-      employees.forEach(emp => {
-        for (let d=1; d<=numDays; d++) {
-          const u = parseInt(akordMap[`${proj.id}|${emp.id}|${toDateStr(year,month,d)}`])||0;
-          if (u>0) rows.push([proj.name,proj.number||"",emp.last_name,emp.first_name,emp.is_student?"TAK":"NIE",toDateStr(year,month,d),u]);
-        }
-      });
-    });
-    if (rows.length<=1){showToast("Brak danych do eksportu","err");return;}
-    const bom="﻿";
-    const csv=rows.map(r=>r.map(v=>{const s=String(v);return s.includes(",")||s.includes("\n")?'"'+s.replace(/"/g,'""')+'"':s;}).join(",")).join("\r\n");
-    const blob=new Blob([bom+csv],{type:"text/csv;charset=utf-8;"});
-    const url=URL.createObjectURL(blob); const a=document.createElement("a");
-    a.href=url; a.download=`VIAVOX_Akord_${monthName}_${year}.csv`;
-    a.click(); URL.revokeObjectURL(url);
-    showToast(`Pobrano: VIAVOX_Akord_${monthName}_${year}.csv`);
   }
 
   function prevMonth() { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); }
@@ -1080,8 +821,8 @@ export default function App() {
           {[
             ["timesheet","Timesheet"],
             ["employees","Pracownicy"],
-            ...(isAdmin ? [["projects","Projekty"],["managers","Kierownicy"]] : []),
             ["akord","Akord"],
+            ...(isAdmin ? [["projects","Projekty"],["managers","Kierownicy"]] : []),
             ["report","Raport"],
           ].map(([key,label])=>(
             <button key={key} className={`nav-tab${tab===key?" active":""}`}
@@ -1126,9 +867,9 @@ export default function App() {
             <div style={{ flex:1, padding:"12px 0" }}>
               {[
                 ["timesheet","📋 Timesheet"],
+                ["akord","📦 Akord"],
                 ["employees","👥 Pracownicy"],
                 ...(isAdmin ? [["projects","📁 Projekty"],["managers","👤 Kierownicy"]] : []),
-                ["akord","📦 Akord"],
                 ["report","📊 Raport"],
               ].map(([key,label])=>(
                 <button key={key} onClick={()=>{setTab(key);setMobileNavOpen(false);}} style={{
@@ -1441,6 +1182,200 @@ export default function App() {
         );
       })()}
 
+      {/* ═══ AKORD ═══ */}
+      {tab==="akord" && (()=>{
+        const days = daysInMonth(year, month);
+        const pwProjects = myProjects.filter(p => pieceRates[p.id]);
+
+        // Filter employees on selected project - show all employees but order those with data first
+        const pwEmps = activeProj
+          ? (() => {
+              const withData = employees.filter(e => {
+                for (let d=1;d<=days;d++) if (parseFloat(getPW(activeProj,e.id,d)||0)>0) return true;
+                return false;
+              });
+              // Also find employees who have piece_work entries in pieceMap for this project
+              const projKeys = Object.keys(pieceMap).filter(k => k.startsWith(activeProj+"|"));
+              const empIdsWithData = new Set(projKeys.map(k => k.split("|")[1]));
+              const withPieceData = employees.filter(e => empIdsWithData.has(e.id));
+              // Merge both sets
+              const merged = [...new Map([...withData, ...withPieceData].map(e => [e.id, e])).values()];
+              return merged.length > 0 ? merged : employees;
+            })()
+          : employees;
+
+        const filteredPWEmps = pwEmps.filter(e =>
+          `${e.first_name} ${e.last_name}`.toLowerCase().includes(searchQ.toLowerCase())
+        );
+
+        return (
+          <div style={{ display:"flex", flexDirection:"column", height:"100%", overflow:"hidden" }}>
+            {/* toolbar */}
+            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 16px",
+                          borderBottom:`1px solid ${C.gray2}`, background:C.white, flexWrap:"wrap" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <button className="btn-ghost btn-sm" onClick={prevMonth}>‹</button>
+                <span style={{ fontWeight:700, color:C.blue, fontSize:15, minWidth:110, textAlign:"center" }}>
+                  {MONTHS[month]} {year}
+                </span>
+                <button className="btn-ghost btn-sm" onClick={nextMonth}>›</button>
+              </div>
+              <select className="inp" style={{ maxWidth:220, padding:"6px 10px", fontSize:12 }}
+                value={activeProj||""} onChange={e=>setActiveProj(e.target.value||null)}>
+                <option value="">— wszystkie projekty —</option>
+                {pwProjects.map(p=>(
+                  <option key={p.id} value={p.id}>[{p.number}] {p.name}
+                    {pieceRates[p.id] ? ` (${pieceRates[p.id].rate} zł/${pieceRates[p.id].unit})` : ""}
+                  </option>
+                ))}
+              </select>
+              <input className="inp" placeholder="Szukaj pracownika..." value={searchQ}
+                onChange={e=>setSearchQ(e.target.value)}
+                style={{ maxWidth:200, padding:"6px 10px", fontSize:12 }} />
+              {isAdmin && activeProj && !pieceRates[activeProj] && (
+                <button className="btn btn-sm" onClick={()=>setModal("addPieceRate")}>
+                  + Ustaw stawkę
+                </button>
+              )}
+            </div>
+
+            {pwProjects.length === 0 ? (
+              <div style={{ padding:40, textAlign:"center", color:C.gray4 }}>
+                Brak projektów akordowych. Admin musi ustawić stawkę akordową dla projektu.
+              </div>
+            ) : (
+              <div style={{ flex:1, overflow:"auto" }}>
+                <table style={{ borderCollapse:"collapse", fontSize:12, minWidth: (activeProj ? days*52+220 : 400) }}>
+                  <thead>
+                    <tr style={{ background:C.gray2, position:"sticky", top:0, zIndex:10 }}>
+                      <th style={{ padding:"8px 12px", textAlign:"left", fontWeight:600,
+                                   color:C.gray6, position:"sticky", left:0, background:C.gray2,
+                                   borderRight:`1px solid ${C.gray3}`, minWidth:180 }}>
+                        PRACOWNIK
+                      </th>
+                      {activeProj && Array.from({length:days},(_,i)=>{
+                        const d=i+1;
+                        const dow=new Date(year,month,d).getDay();
+                        const wknd=dow===0||dow===6;
+                        const isToday=new Date().getDate()===d&&new Date().getMonth()===month&&new Date().getFullYear()===year;
+                        return (
+                          <th key={d} style={{ padding:"4px 2px", minWidth:48, textAlign:"center",
+                                              color:wknd?C.gray3:C.gray5, fontWeight:500, fontSize:10,
+                                              background:isToday?C.blueLight:C.gray2 }}>
+                            <div>{d}</div>
+                            <div style={{fontSize:8}}>{"NWŚCPSS"[dow]}</div>
+                          </th>
+                        );
+                      })}
+                      {activeProj && (
+                        <th style={{ padding:"8px 6px", textAlign:"center", fontWeight:600,
+                                     color:C.gray6, minWidth:70 }}>SUMA szt.</th>
+                      )}
+                      {activeProj && (
+                        <th style={{ padding:"8px 6px", textAlign:"right", fontWeight:600,
+                                     color:C.blue, minWidth:90 }}>Przychód</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredPWEmps.map((emp, ri) => {
+                      const rowBg = ri%2===0 ? C.white : "#F8FAFC";
+                      const totalQty = activeProj
+                        ? Array.from({length:days},(_,i)=>parseFloat(getPW(activeProj,emp.id,i+1)||0)||0)
+                            .reduce((s,v)=>s+v,0)
+                        : 0;
+                      const pr = activeProj ? pieceRates[activeProj] : null;
+                      const rev = pr ? Math.round(totalQty * pr.rate * 100)/100 : 0;
+                      return (
+                        <tr key={emp.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
+                          <td style={{ padding:"6px 12px", position:"sticky", left:0,
+                                       background:rowBg, borderRight:`1px solid ${C.gray2}`,
+                                       fontWeight:500, color:C.gray7, whiteSpace:"nowrap" }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                              <span style={{ width:28, height:28, borderRadius:"50%", display:"flex",
+                                             alignItems:"center", justifyContent:"center",
+                                             background:C.blueLight, color:C.blue,
+                                             fontSize:10, fontWeight:700, flexShrink:0 }}>
+                                {emp.first_name[0]}{emp.last_name[0]}
+                              </span>
+                              {emp.last_name} {emp.first_name}
+                              <span className={`badge ${emp.is_student?"stu":"pr"}`}>
+                                {emp.is_student?"UZS":"UZSO"}
+                              </span>
+                            </div>
+                          </td>
+                          {activeProj && Array.from({length:days},(_,i)=>{
+                            const d=i+1;
+                            const dow=new Date(year,month,d).getDay();
+                            const wknd=dow===0||dow===6;
+                            const val=getPW(activeProj,emp.id,d);
+                            const isToday=new Date().getDate()===d&&new Date().getMonth()===month&&new Date().getFullYear()===year;
+                            return (
+                              <td key={d} style={{ padding:"2px", textAlign:"center",
+                                                   background:isToday?"#EFF6FF":wknd?"#FAFAFA":"transparent" }}>
+                                <input
+                                  type="number" min="0" step="1"
+                                  value={val}
+                                  onChange={e=>savePieceWork(activeProj,emp.id,d,e.target.value)}
+                                  style={{ width:44, textAlign:"center", border:"none",
+                                           background:"transparent", fontSize:12,
+                                           color:val&&parseFloat(val)>0?C.blue:C.gray3,
+                                           fontWeight:val&&parseFloat(val)>0?600:400,
+                                           outline:"none", padding:"3px 0" }}
+                                  placeholder="—"
+                                />
+                              </td>
+                            );
+                          })}
+                          {activeProj && (
+                            <td style={{ padding:"6px", textAlign:"center", fontWeight:700, color:C.gray7 }}>
+                              {totalQty > 0 ? Math.round(totalQty) : "—"}
+                            </td>
+                          )}
+                          {activeProj && (
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontWeight:700,
+                                         color:rev>0?"#1F7A4C":C.gray3 }}>
+                              {rev>0 ? `${rev.toLocaleString('pl-PL',{minimumFractionDigits:2,maximumFractionDigits:2})} zł` : "—"}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                    {/* Suma dzienna */}
+                    {activeProj && (
+                      <tr style={{ background:C.gray2, borderTop:`2px solid ${C.gray3}`, position:"sticky", bottom:0 }}>
+                        <td style={{ padding:"8px 12px", fontWeight:700, color:C.gray7,
+                                     position:"sticky", left:0, background:C.gray2,
+                                     borderRight:`1px solid ${C.gray3}` }}>SUMA DZIENNA</td>
+                        {Array.from({length:days},(_,i)=>{
+                          const d=i+1;
+                          const t=Math.round(getPWDay(activeProj,d)*100)/100;
+                          return (
+                            <td key={d} style={{ padding:"6px 2px", textAlign:"center",
+                                                 fontWeight:600, color:t>0?C.blue:C.gray3, fontSize:11 }}>
+                              {t>0?t:"—"}
+                            </td>
+                          );
+                        })}
+                        <td style={{ padding:"6px", textAlign:"center", fontWeight:700, color:C.gray7 }}>
+                          {Math.round(getPWTotal(activeProj))}
+                        </td>
+                        <td style={{ padding:"6px 10px", textAlign:"right", fontWeight:700, color:"#1F7A4C" }}>
+                          {pieceRates[activeProj]
+                            ? `${Math.round(getPWTotal(activeProj)*pieceRates[activeProj].rate*100)/100
+                                .toLocaleString('pl-PL',{minimumFractionDigits:2,maximumFractionDigits:2})} zł`
+                            : "—"}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* ═══ PROJECTS ═══ */}
       {tab==="projects"&&isAdmin&&(
         <div className="page-pad" style={{ padding:"24px 28px", maxWidth:1100 }}>
@@ -1566,151 +1501,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ═══ AKORD ═══ */}
-      {tab==="akord" && (
-        <div style={{ display:"flex", flexDirection:"column", height:"calc(100vh - 53px)" }}>
-          <div style={{ background:C.white, borderBottom:`1px solid ${C.gray3}`,
-                        padding: isMobile?"8px 12px":"8px 20px",
-                        display:"flex", alignItems:"center", gap: isMobile?8:12,
-                        flexShrink:0, flexWrap: isMobile?"wrap":"nowrap" }}>
-            <button className="btn-ghost" onClick={prevMonth} style={{ padding:"5px 10px", fontSize:14, flexShrink:0 }}>‹</button>
-            <div style={{ fontWeight:600, fontSize:14, color:C.gray7, width:isMobile?130:148, textAlign:"center", flexShrink:0 }}>
-              {MONTHS[month]} {year}
-            </div>
-            <button className="btn-ghost" onClick={nextMonth} style={{ padding:"5px 10px", fontSize:14, flexShrink:0 }}>›</button>
-            {!isMobile && <div style={{ width:1, height:24, background:C.gray3, flexShrink:0 }} />}
-            <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0, flex: isMobile?"1":"none" }}>
-              {!isMobile && <span style={{ fontSize:11, color:C.gray5, fontWeight:500 }}>Projekt</span>}
-              <select className="inp" value={akordProj||""} onChange={e=>setAkordProj(e.target.value||null)}
-                style={{ width: isMobile?"100%":260, padding:"7px 10px", fontSize:13, fontWeight:500, color:C.gray7,
-                         borderColor:akordProj?C.blue:C.gray3, boxShadow:akordProj?`0 0 0 3px ${C.blueLight}`:"none" }}>
-                <option value="">— wszyscy pracownicy —</option>
-                {[...myProjects].sort((a,b)=>(a.number||"").localeCompare(b.number||"","pl",{numeric:true})).map(p=>(
-                  <option key={p.id} value={p.id}>{p.number?`[${p.number}] ${p.name}`:p.name}</option>
-                ))}
-              </select>
-            </div>
-            {!isMobile && (
-              <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:0 }}>
-                <span style={{ fontSize:11, color:C.gray5, fontWeight:500, whiteSpace:"nowrap" }}>Szukaj</span>
-                <input className="inp" placeholder="imię lub nazwisko…" value={akordSearch}
-                  onChange={e=>setAkordSearch(e.target.value)}
-                  style={{ flex:1, minWidth:0, padding:"7px 11px", fontSize:13 }} />
-              </div>
-            )}
-            <div style={{ display:"flex", gap:6, flexShrink:0, alignItems:"center" }}>
-              <div style={{ background:"#FFF3E0", color:"#E07B20", fontSize:11, fontWeight:600,
-                            padding:"4px 10px", borderRadius:6, whiteSpace:"nowrap" }}>📦 kartony / dzień</div>
-              <button className="btn-ghost btn-sm" onClick={exportAkordToExcel}>⬇ Excel</button>
-              <button className="btn-ghost btn-sm" onClick={exportAkordToCSV}>⬇ CSV</button>
-            </div>
-          </div>
-          <div style={{ flex:1, overflow:"auto" }}>
-            {(()=>{
-              const q = akordSearch.toLowerCase().trim();
-              let base = employees;
-              if (akordProj) {
-                const ids = new Set(Object.keys(akordMap).filter(k=>k.startsWith(akordProj+"|")).map(k=>k.split("|")[1]));
-                if (ids.size>0) base = employees.filter(e=>ids.has(e.id));
-              }
-              const filteredAkordEmps = q ? employees.filter(e=>`${e.first_name} ${e.last_name}`.toLowerCase().includes(q)) : base;
-              return (
-                <table style={{ borderCollapse:"collapse", minWidth:"100%", fontSize:12 }}>
-                  <thead style={{ position:"sticky", top:0, zIndex:10 }}>
-                    <tr style={{ background:C.gray2 }}>
-                      <th style={{ ...TH, width: isMobile?110:210, position:"sticky", left:0, zIndex:11,
-                                   background:C.gray2, textAlign:"left", padding: isMobile?"8px 8px":"10px 16px",
-                                   borderRight:`1px solid ${C.gray3}`, color:C.gray5 }}>
-                        {isMobile?"PRAC.":"PRACOWNIK"}
-                      </th>
-                      {Array.from({length:days},(_,i)=>i+1).map(d=>(
-                        <th key={d} style={{ ...TH, width: isMobile?28:36, minWidth: isMobile?28:36,
-                          background:isWeekend(year,month,d)?C.wknd:C.gray2, borderBottom:`1px solid ${C.gray3}` }}>
-                          <div style={{ color:isWeekend(year,month,d)?C.gray3:"#E07B20", fontSize:13, fontWeight:600 }}>{d}</div>
-                          <div style={{ fontSize:9, marginTop:1, color:isWeekend(year,month,d)?C.gray3:C.gray4, fontWeight:500 }}>
-                            {DOW[dayOfWeek(year,month,d)]}
-                          </div>
-                        </th>
-                      ))}
-                      <th style={{ ...TH, width:80, position:"sticky", right:0,
-                                   background:C.gray2, borderLeft:`1px solid ${C.gray3}`, color:C.gray5 }}>SUMA</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredAkordEmps.length===0 && (
-                      <tr><td colSpan={days+2} style={{ padding:32, color:C.gray4, textAlign:"center" }}>Brak pracowników</td></tr>
-                    )}
-                    {filteredAkordEmps.map((emp,ri)=>{
-                      const total = empAkord(akordProj, emp.id);
-                      const rowBg = ri%2===0?C.white:"#F8FAFC";
-                      return (
-                        <tr key={emp.id} className="emp-row" style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
-                          <td style={{ position:"sticky", left:0, zIndex:2, background:rowBg,
-                                       borderRight:`1px solid ${C.gray2}`, padding: isMobile?"5px 6px":"6px 14px", whiteSpace:"nowrap" }}>
-                            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                              <div style={{ width:26, height:26, borderRadius:"50%", background:"#FFF3E0",
-                                            color:"#E07B20", display:"flex", alignItems:"center", justifyContent:"center",
-                                            fontSize:10, fontWeight:600, flexShrink:0 }}>
-                                {emp.first_name[0]}{emp.last_name[0]}
-                              </div>
-                              <div>
-                                <div style={{ fontWeight:500, color:C.gray7, fontSize: isMobile?11:12 }}>
-                                  {isMobile ? emp.last_name : `${emp.first_name} ${emp.last_name}`}
-                                </div>
-                                {!isMobile && emp.uk_number && <div style={{ fontSize:10, color:C.gray4 }}>{emp.uk_number}</div>}
-                              </div>
-                              {emp.is_student?<span className="tag-s">STU</span>:<span className="tag-p">PR</span>}
-                            </div>
-                          </td>
-                          {Array.from({length:days},(_,i)=>i+1).map(d=>{
-                            const val = getA(akordProj, emp.id, d);
-                            return (
-                              <td key={d}
-                                className={`ts-cell${isWeekend(year,month,d)?" wknd":""}${val?" filled":""}`}
-                                style={{ height:36, padding:0, borderRight:`1px solid ${C.gray2}` }}>
-                                <input type="number" min="0" step="1" placeholder="·" value={val}
-                                  onChange={e=>setA(akordProj, emp.id, d, e.target.value)} />
-                              </td>
-                            );
-                          })}
-                          <td style={{ position:"sticky", right:0, zIndex:2, background:rowBg,
-                                       borderLeft:`1px solid ${C.gray2}`, padding:"0 8px",
-                                       textAlign:"center", fontWeight:600, whiteSpace:"nowrap",
-                                       color:total>0?"#E07B20":C.gray3, fontSize:12 }}>
-                            {total>0?`${total.toLocaleString("pl-PL")} szt.`:"—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    <tr style={{ background:C.gray2, borderTop:`2px solid ${C.gray3}`, position:"sticky", bottom:0, zIndex:5 }}>
-                      <td style={{ position:"sticky", left:0, background:C.gray2,
-                                   borderRight:`1px solid ${C.gray3}`, padding:"7px 14px",
-                                   color:C.gray5, fontSize:10, fontWeight:500 }}>SUMA DNIA</td>
-                      {Array.from({length:days},(_,i)=>i+1).map(d=>{
-                        const t = dayAkord(akordProj, d);
-                        return (
-                          <td key={d} style={{ textAlign:"center", padding:"6px 0",
-                                               borderRight:`1px solid ${C.gray2}`,
-                                               color:t>0?C.gray6:C.gray3, fontSize:11, fontWeight:t>0?500:400 }}>
-                            {t>0?t.toLocaleString("pl-PL"):""}
-                          </td>
-                        );
-                      })}
-                      <td style={{ position:"sticky", right:0, background:C.gray2,
-                                   borderLeft:`1px solid ${C.gray3}`, textAlign:"center",
-                                   color:projAkord(akordProj)>0?"#E07B20":C.gray4,
-                                   fontWeight:700, fontSize:12, padding:"0 8px", whiteSpace:"nowrap" }}>
-                        {projAkord(akordProj)>0?`${projAkord(akordProj).toLocaleString("pl-PL")} szt.`:"—"}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              );
-            })()}
-          </div>
-        </div>
-      )}
-
       {/* ═══ REPORT ═══ */}
       {tab==="report" && (()=>{
         const today      = new Date();
@@ -1745,15 +1535,6 @@ export default function App() {
         const getRate = (p) => (p && p.number && rates && rates[p.number]) ? Number(rates[p.number]) : 0;
         const projRev = (p) => Math.round(projTotal(p.id) * getRate(p) * 100)/100;
         const fmt = (n) => { const v=Number(n); return isNaN(v)?'0,00':v.toLocaleString('pl-PL',{minimumFractionDigits:2,maximumFractionDigits:2}); };
-        const fmtInt = (n) => Number(n).toLocaleString('pl-PL');
-
-        // Akord helpers
-        const getPieceRate = (p) => pieceRates[p.id] ? pieceRates[p.id].rate : 0;
-        const getPieceUnit = (p) => pieceRates[p.id] ? pieceRates[p.id].unit : null;
-        const projKartony  = (p) => Object.values(akordTotalsCache.empProj[p.id]||{}).reduce((s,v)=>s+v,0);
-        const projRevAkord = (p) => Math.round(projKartony(p)*getPieceRate(p)*100)/100;
-        const totalKartony  = myProjects.reduce((s,p)=>s+projKartony(p),0);
-        const totalRevAkord = Math.round(myProjects.reduce((s,p)=>s+projRevAkord(p),0)*100)/100;
 
         const sortCol = reportSortCol;
         const sortDir = reportSortDir;
@@ -1767,8 +1548,7 @@ export default function App() {
           return <span style={{color:C.blue, fontSize:10}}>{sortDir==='asc'?' ↑':' ↓'}</span>;
         }
 
-        const totalRevenueH = Math.round(myProjects.reduce((s,p)=>s+projRev(p),0)*100)/100;
-        const totalRevenue  = Math.round((totalRevenueH+totalRevAkord)*100)/100;
+        const totalRevenue = Math.round(myProjects.reduce((s,p)=>s+projRev(p),0)*100)/100;
 
         // Algorytm prognozy: suma prognoz per projekt (każdy projekt ma swoją stawkę)
         const avgRate = 0; // unused at global level — calculated per project below
@@ -1797,16 +1577,7 @@ export default function App() {
             const pDowH  = [0,0,0,0,0,0,0]; const pDowC  = [0,0,0,0,0,0,0];
             const pDowSH = [0,0,0,0,0,0,0]; const pDowSC = [0,0,0,0,0,0,0];
             const pDowWH = [0,0,0,0,0,0,0]; const pDowWC = [0,0,0,0,0,0,0];
-            // Tylko zamknięte tygodnie kalendarzowe (pon–niedz)
-            const lastSunR = (() => {
-              const cur = new Date(year, month, daysPassed);
-              const d = cur.getDay();
-              const daysBack = d === 0 ? 0 : d;
-              const sun = new Date(cur); sun.setDate(cur.getDate() - daysBack);
-              if (sun.getMonth() !== month || sun.getFullYear() !== year) return 0;
-              return sun.getDate();
-            })();
-            for (let d=1;d<=lastSunR;d++){
+            for (let d=1;d<=daysPassed;d++){
               const dow=new Date(year,month,d).getDay();
               const dh=dayTotal(p.id,d);
               if(dh>0){ pDowH[dow]+=dh; pDowC[dow]++; }
@@ -1829,28 +1600,9 @@ export default function App() {
             fSH = Math.round(fSH*100)/100;
             fWH = Math.round(fWH*100)/100;
             const forecast = rate>0 ? Math.round((rev + fH*rate)*100)/100 : 0;
-            const kartony   = projKartony(p);
-            const pieceRate = getPieceRate(p);
-            const pieceUnit = getPieceUnit(p);
-            const revAkord  = projRevAkord(p);
-            const pDowA=[0,0,0,0,0,0,0],pDowAC=[0,0,0,0,0,0,0];
-            for(let d=1;d<=lastSunR;d++){
-              const dow=new Date(year,month,d).getDay();
-              const da=dayAkord(p.id,d);
-              if(da>0){pDowA[dow]+=da;pDowAC[dow]++;}
-            }
-            const pDowAvgA=pDowA.map((u,i)=>pDowAC[i]>0?u/pDowAC[i]:0);
-            let fKartony=0;
-            for(let d=daysPassed+1;d<=daysTotal;d++){
-              fKartony+=pDowAvgA[new Date(year,month,d).getDay()];
-            }
-            fKartony=Math.round(fKartony);
-            const forecastAkord = pieceRate>0 ? Math.round((revAkord+fKartony*pieceRate)*100)/100 : 0;
-            const forecastTotal = Math.round((forecast+forecastAkord)*100)/100;
-            return {p,h,rate,rev,sH,wH,empCount,stuCount,forecast,fSH,fWH,fH,
-                    kartony,pieceRate,pieceUnit,revAkord,fKartony,forecastAkord,forecastTotal};
+            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH};
           })
-          .filter(r=>r.h>0||r.kartony>0)
+          .filter(r=>r.h>0)
           .sort((a,b)=>{
             const dir = sortDir==='asc' ? 1 : -1;
             switch(sortCol) {
@@ -1863,17 +1615,12 @@ export default function App() {
               case 'h':        return dir*(a.h-b.h);
               case 'rate':     return dir*(a.rate-b.rate);
               case 'forecast': return dir*(a.forecast-b.forecast);
-              case 'pct':          return dir*((a.h>0?a.sH/a.h:0)-(b.h>0?b.sH/b.h:0));
-              case 'kartony':      return dir*(a.kartony-b.kartony);
-              case 'revAkord':     return dir*(a.revAkord-b.revAkord);
-              case 'forecastTotal':return dir*(a.forecastTotal-b.forecastTotal);
-              default:             return dir*(a.rev-b.rev);
+              case 'pct':      return dir*((a.h>0?a.sH/a.h:0)-(b.h>0?b.sH/b.h:0));
+              default:         return dir*(a.rev-b.rev);
             }
           });
 
-        const totalForecastH = Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100;
-        const totalForecastA = Math.round(projRows.reduce((s,r)=>s+(r.forecastAkord||0),0)*100)/100;
-        const totalForecast  = Math.round((totalForecastH+totalForecastA)*100)/100;
+        const totalForecast = Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100;
         forecastRev = totalForecast;
 
         return (
@@ -1886,8 +1633,8 @@ export default function App() {
             <button className="btn-ghost" onClick={nextMonth} style={{ padding:"5px 10px", fontSize:14 }}>›</button>
             <span style={{ fontSize:11, color:C.gray4 }}>Dzień {daysPassed}/{daysTotal} — pozostało {daysLeft} dni</span>
             <div style={{ display:"flex", gap:6, marginLeft:"auto" }}>
-              <button className="btn-ghost btn-sm" onClick={exportReportToExcel}>⬇ Excel</button>
-              <button className="btn-ghost btn-sm" onClick={exportReportToCSV}>⬇ CSV</button>
+              <button className="btn-ghost btn-sm" onClick={exportToExcel}>⬇ Excel</button>
+              <button className="btn-ghost btn-sm" onClick={exportToCSV}>⬇ CSV</button>
             </div>
           </div>
 
@@ -1907,24 +1654,6 @@ export default function App() {
               </div>
             ))}
           </div>
-
-          {/* KPI akord */}
-          {totalKartony>0&&(
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:12 }}>
-              {[
-                {label:"Kartony — łącznie",  value:`${fmtInt(totalKartony)} szt.`, sub:"akord miesięczny"},
-                {label:"Przychód z akordu",  value:`${fmt(totalRevAkord)} zł`,     sub:"do teraz"},
-                {label:"Prognoza akord",      value:`${fmt(totalForecastA)} zł`,    sub:"cały miesiąc"},
-              ].map(({label,value,sub})=>(
-                <div key={label} style={{ background:"#FFFBF5", border:"1px solid #FFE0B2",
-                  borderRadius:10, padding:"14px 16px" }}>
-                  <div style={{ fontSize:10, color:C.gray4, fontWeight:500, marginBottom:5, textTransform:"uppercase", letterSpacing:".04em" }}>{label}</div>
-                  <div style={{ fontSize:22, fontWeight:700, color:"#E07B20", lineHeight:1 }}>{value}</div>
-                  <div style={{ fontSize:11, color:C.gray4, marginTop:5 }}>{sub}</div>
-                </div>
-              ))}
-            </div>
-          )}
 
           {/* KPI przychód */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
@@ -1984,29 +1713,29 @@ export default function App() {
           {/* Tabela projektów */}
           <div className="report-table-scroll" style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10, overflow:"hidden" }}>
             <div style={{ padding:"12px 18px", borderBottom:`1px solid ${C.gray2}`, fontSize:12, fontWeight:600, color:C.gray6 }}>Zestawienie projektów</div>
-            <table style={{ width:"100%", minWidth:1050, borderCollapse:"collapse", fontSize:11 }}>
+            <table style={{ width:"100%", minWidth:1300, borderCollapse:"collapse", fontSize:12 }}>
               <thead>
                 <tr style={{ background:C.gray2 }}>
                   {[
-                    {label:"Nr",         col:"number"},
-                    {label:"Projekt",    col:"name"},
-                    {label:"Prac.",      col:"empCount"},
-                    {label:"UZS",        col:"stuCount"},
-                    {label:"Godz. UZS",  col:"sH"},
-                    {label:"Godz. UZSO", col:"wH"},
-                    {label:"Łącznie",    col:"h"},
-                    {label:"Stawka",     col:"rate"},
-                    {label:"Prz. godz.", col:"rev"},
-                    {label:"Kartony",    col:"kartony"},
-                    {label:"Prz. akord", col:"revAkord"},
-                    {label:"Prognoza",   col:"forecastTotal"},
-                    {label:"Prog. h",    col:"fH"},
-                    {label:"% UZS",      col:"pct"},
+                    {label:"Nr",            col:"number"},
+                    {label:"Projekt",       col:"name"},
+                    {label:"Prac.",         col:"empCount"},
+                    {label:"UZS",           col:"stuCount"},
+                    {label:"Godz. UZS",     col:"sH"},
+                    {label:"Godz. UZSO",    col:"wH"},
+                    {label:"Łącznie",       col:"h"},
+                    {label:"Stawka",        col:"rate"},
+                    {label:"Przychód",      col:"rev"},
+                    {label:"Prognoza",      col:"forecast"},
+                    {label:"Prog. UZS h",   col:"fSH"},
+                    {label:"Prog. UZSO h",  col:"fWH"},
+                    {label:"Prog. Total h", col:"fH"},
+                    {label:"% UZS",         col:"pct"},
                   ].map(({label,col})=>(
                     <th key={col} onClick={()=>toggleSort(col)}
-                      style={{ padding:"5px 5px",
+                      style={{ padding:"8px 10px",
                                textAlign:label==="Projekt"?"left":"center",
-                               fontSize:9, fontWeight:600,
+                               fontSize:10, fontWeight:600,
                                color:sortCol===col?C.blue:C.gray5,
                                borderBottom:`1px solid ${C.gray3}`,
                                cursor:"pointer", userSelect:"none", whiteSpace:"nowrap",
@@ -2020,29 +1749,29 @@ export default function App() {
                 {projRows.length===0&&(
                   <tr><td colSpan={14} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
                 )}
-                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH,kartony,pieceRate,pieceUnit,revAkord,fKartony,forecastAkord,forecastTotal},ri)=>{
+                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH},ri)=>{
                   const pct=h>0?Math.round((sH/h)*100):0; const rowBg=ri%2===0?C.white:"#F8FAFC";
                   return (
                     <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
-                      <td style={{ padding:"5px 4px", textAlign:"center", color:C.gray4, fontSize:10, whiteSpace:"nowrap" }}>{p.number||"—"}</td>
-                      <td style={{ padding:"5px 5px", fontWeight:500, color:C.gray7, minWidth:100 }}>{p.name}</td>
-                      <td style={{ padding:"5px 4px", textAlign:"center", color:C.gray6, fontSize:10 }}>{empCount}</td>
-                      <td style={{ padding:"5px 4px", textAlign:"center", color:"#3DAA70", fontWeight:500, fontSize:10 }}>{stuCount}</td>
-                      <td style={{ padding:"5px 4px", textAlign:"center", color:"#3DAA70", fontWeight:500, fontSize:10 }}>{sH>0?`${sH}h`:"—"}</td>
-                      <td style={{ padding:"5px 4px", textAlign:"center", color:C.blue, fontWeight:500, fontSize:10 }}>{wH>0?`${wH}h`:"—"}</td>
-                      <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:C.blue, fontSize:10 }}>{h}h</td>
-                      <td style={{ padding:"5px 4px", textAlign:"center", color:rate>0?C.gray6:C.gray3, fontSize:10 }}>{rate>0?`${rate.toFixed(2)}`:"—"}</td>
-                      <td style={{ padding:"5px 4px", textAlign:"right", fontWeight:600, color:rev>0?"#1F7A4C":C.gray3, fontSize:10 }}>{rev>0?fmt(rev):"—"}</td>
-                      <td style={{ padding:"5px 4px", textAlign:"right", color:(kartony||0)>0?"#E07B20":C.gray3, fontWeight:500, fontSize:10 }} title={(kartony||0)>0&&(pieceRate||0)>0?`${(pieceRate||0).toFixed(4)} zł/szt`:undefined}>{(kartony||0)>0?fmtInt(kartony):"—"}</td>
-                      <td style={{ padding:"5px 4px", textAlign:"right", fontWeight:600, color:(revAkord||0)>0?"#B85C00":C.gray3, fontSize:10 }}>{(revAkord||0)>0?fmt(revAkord):"—"}</td>
-                      <td style={{ padding:"5px 4px", textAlign:"right", fontWeight:600, color:(forecastTotal||0)>0?"#3DAA70":C.gray3, fontSize:10 }}>{(forecastTotal||0)>0?fmt(forecastTotal):"—"}</td>
-                      <td style={{ padding:"5px 4px", textAlign:"right", color:C.gray6, fontSize:10 }}>{(h+(fH||0))>0?`${Math.round((h+(fH||0))*100)/100}h`:"—"}</td>
-                      <td style={{ padding:"5px 3px" }}>
-                        <div style={{ display:"flex", alignItems:"center", gap:3 }}>
-                          <div style={{ flex:1, height:4, background:C.gray2, borderRadius:2 }}>
-                            <div style={{ height:"100%", width:`${pct}%`, background:"#3DAA70", borderRadius:2 }}/>
+                      <td style={{ padding:"8px 10px", textAlign:"center", color:C.gray4, fontSize:11, whiteSpace:"nowrap" }}>{p.number||"—"}</td>
+                      <td style={{ padding:"8px 10px", fontWeight:500, color:C.gray7, minWidth:140 }}>{p.name}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"center", color:C.gray6 }}>{empCount}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{stuCount}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{sH>0?`${sH}h`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"center", color:C.blue, fontWeight:500 }}>{wH>0?`${wH}h`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"center", fontWeight:700, color:C.blue }}>{h}h</td>
+                      <td style={{ padding:"8px 10px", textAlign:"center", color:rate>0?C.gray6:C.gray3, fontSize:11 }}>{rate>0?`${rate.toFixed(2)} zł`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:700, color:rev>0?"#1F7A4C":C.gray3, whiteSpace:"nowrap" }}>{rev>0?`${fmt(rev)} zł`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:forecast>0?"#3DAA70":C.gray3, whiteSpace:"nowrap" }}>{forecast>0?`${fmt(forecast)} zł`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", color:"#3DAA70", fontSize:11 }}>{fSH>0?`${Math.round((sH+fSH)*100)/100}h`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", color:C.blue, fontSize:11 }}>{fWH>0?`${Math.round((wH+fWH)*100)/100}h`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:11 }}>{fH>0?`${Math.round((h+fH)*100)/100}h`:"—"}</td>
+                      <td style={{ padding:"8px 10px" }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+                          <div style={{ flex:1, height:5, background:C.gray2, borderRadius:3 }}>
+                            <div style={{ height:"100%", width:`${pct}%`, background:"#3DAA70", borderRadius:3 }}/>
                           </div>
-                          <span style={{ fontSize:9, color:C.gray5, minWidth:22 }}>{pct}%</span>
+                          <span style={{ fontSize:10, color:C.gray5, minWidth:26 }}>{pct}%</span>
                         </div>
                       </td>
                     </tr>
@@ -2050,20 +1779,20 @@ export default function App() {
                 })}
                 {projRows.length>0&&(
                   <tr style={{ background:C.gray2, borderTop:`2px solid ${C.gray3}`, fontWeight:700 }}>
-                    <td style={{ padding:"6px 4px", color:C.gray5, fontSize:10 }}>—</td>
-                    <td style={{ padding:"6px 5px", color:C.gray7, fontWeight:700, fontSize:11 }}>RAZEM</td>
-                    <td style={{ padding:"6px 4px", textAlign:"center", color:C.gray6, fontSize:10 }}>{activeEmps.length}</td>
-                    <td style={{ padding:"6px 4px", textAlign:"center", color:"#3DAA70", fontSize:10 }}>{activeStudents}</td>
-                    <td style={{ padding:"6px 4px", textAlign:"center", color:"#3DAA70", fontSize:10 }}>{studentH}h</td>
-                    <td style={{ padding:"6px 4px", textAlign:"center", color:C.blue, fontSize:10 }}>{workerH}h</td>
-                    <td style={{ padding:"6px 4px", textAlign:"center", color:C.blue, fontSize:10 }}>{totalAllH}h</td>
-                    <td style={{ padding:"6px 4px", textAlign:"center", color:C.gray5, fontSize:10 }}>—</td>
-                    <td style={{ padding:"6px 4px", textAlign:"right", color:"#1F7A4C", fontSize:10, fontWeight:700 }}>{fmt(totalRevenueH)}</td>
-                    <td style={{ padding:"6px 4px", textAlign:"right", color:"#E07B20", fontSize:10, fontWeight:600 }}>{totalKartony>0?fmtInt(totalKartony):"—"}</td>
-                    <td style={{ padding:"6px 4px", textAlign:"right", color:"#B85C00", fontSize:10, fontWeight:600 }}>{totalRevAkord>0?fmt(totalRevAkord):"—"}</td>
-                    <td style={{ padding:"6px 4px", textAlign:"right", color:"#3DAA70", fontSize:10, fontWeight:700 }}>{fmt(totalForecast)}</td>
-                    <td style={{ padding:"6px 4px", textAlign:"right", color:C.gray6, fontSize:10 }}>{Math.round(projRows.reduce((s,r)=>s+r.h+(r.fH||0),0)*100)/100}h</td>
-                    <td style={{ padding:"6px 4px", textAlign:"center", color:C.gray5, fontSize:10 }}>{stuPct}%</td>
+                    <td style={{ padding:"9px 10px", color:C.gray5 }}>—</td>
+                    <td style={{ padding:"9px 10px", color:C.gray7, fontWeight:700 }}>RAZEM</td>
+                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray6 }}>{activeEmps.length}</td>
+                    <td style={{ padding:"9px 10px", textAlign:"center", color:"#3DAA70" }}>{activeStudents}</td>
+                    <td style={{ padding:"9px 10px", textAlign:"center", color:"#3DAA70" }}>{studentH}h</td>
+                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.blue }}>{workerH}h</td>
+                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.blue }}>{totalAllH}h</td>
+                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#1F7A4C", fontSize:13 }}>{fmt(totalRevenue)} zł</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:13 }}>{fmt(totalForecast)} zł</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.sH+(r.fSH||0),0)*100)/100}h</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:C.blue, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.wH+(r.fWH||0),0)*100)/100}h</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.h+(r.fH||0),0)*100)/100}h</td>
+                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>{stuPct}%</td>
                   </tr>
                 )}
               </tbody>
@@ -2072,6 +1801,41 @@ export default function App() {
         </div>
         );
       })()}
+
+      {modal==="addPieceRate" && activeProj && (
+        <div className="modal-bg" onClick={()=>setModal(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div style={{ fontWeight:700, fontSize:18, color:C.gray7 }}>Ustaw stawkę akordową</div>
+            <div style={{ color:C.gray5, fontSize:13 }}>
+              {projects.find(p=>p.id===activeProj)?.name}
+            </div>
+            <div>
+              <label className="lbl">Stawka za sztukę (zł)</label>
+              <input className="inp" type="number" min="0" step="0.001" id="pr-rate"
+                placeholder="np. 0.285" />
+            </div>
+            <div>
+              <label className="lbl">Jednostka</label>
+              <input className="inp" id="pr-unit" defaultValue="karton"
+                placeholder="karton / sztuka / kg" />
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <button className="btn" onClick={async()=>{
+                const rate = parseFloat(document.getElementById("pr-rate").value);
+                const unit = document.getElementById("pr-unit").value || "karton";
+                if (isNaN(rate)||rate<=0) return;
+                await supabase.from("piece_rates").upsert(
+                  { project_id: activeProj, rate, unit },
+                  { onConflict: "project_id" }
+                );
+                setPieceRates(prev=>({...prev, [activeProj]:{rate,unit}}));
+                setModal(null); showToast("Stawka akordowa zapisana");
+              }}>Zapisz</button>
+              <button className="btn-ghost" onClick={()=>setModal(null)}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ MODALS ═══ */}
       {modal==="addEmp"&&(
