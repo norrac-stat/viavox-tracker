@@ -673,6 +673,42 @@ export default function App() {
 
 
   // ── Export ────────────────────────────────────────────────────────────────
+  function exportReportCSV(projRows, totalRevenue, forecastRev, monthName) {
+    const rows = [["Nr","Projekt","Prac.","UZS","Godz. UZS","Godz. UZSO","Łącznie","Stawka","Przychód","Prognoza","Akord szt.","Prog. Akord szt.","% UZS"]];
+    projRows.forEach(r => {
+      const pr = r.p;
+      const pct = r.h>0 ? Math.round((r.sH/r.h)*100) : 0;
+      const totalRev = Math.round((r.rev + r.pieceRev)*100)/100;
+      const totalFc  = Math.round(((r.forecast||0) + (r.pieceForecast||0))*100)/100;
+      const pieceR   = r.p ? window.__pieceRates?.[r.p.id] : null;
+      const fQty     = pieceR && pieceR.rate>0 ? Math.round(((r.pieceForecast||0)-(r.pieceRev||0))/pieceR.rate) : 0;
+      rows.push([
+        pr.number||"", pr.name,
+        r.empCount, r.stuCount,
+        r.sH, r.wH, r.h,
+        r.rate||"—",
+        totalRev, totalFc,
+        r.pieceQty>0 ? Math.round(r.pieceQty) : "—",
+        r.pieceForecast>0 ? Math.round((r.pieceQty||0)+fQty) : "—",
+        pct+"%"
+      ]);
+    });
+    rows.push(["—","RAZEM","","","","","","",
+      Math.round(totalRevenue*100)/100,
+      Math.round(forecastRev*100)/100,"","",""]);
+
+    const csv = rows.map(r => r.map(v => {
+      const s = String(v);
+      return s.includes(",") ? '"'+s.replace(/"/g,'""')+'"' : s;
+    }).join(",")).join("\r\n");
+    const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href=url; a.download=`VIAVOX_Raport_${monthName}_${year}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast(`Pobrano raport CSV (${projRows.length} projektów)`);
+  }
+
   function exportToCSV() {
     const monthName = MONTHS[month];
     const numDays   = daysInMonth(year, month);
@@ -702,7 +738,7 @@ export default function App() {
       return s;
     }).join(","));
     const csv = csvLines.join("\r\n");
-        const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href = url; a.download = `VIAVOX_${monthName}_${year}.csv`;
@@ -1873,6 +1909,7 @@ export default function App() {
             <button className="btn-ghost" onClick={nextMonth} style={{ padding:"5px 10px", fontSize:14 }}>›</button>
             <span style={{ fontSize:11, color:C.gray4 }}>Dzień {daysPassed}/{daysTotal} — pozostało {daysLeft} dni</span>
             <div style={{ display:"flex", gap:6, marginLeft:"auto" }}>
+              <button className="btn-ghost btn-sm" onClick={()=>exportReportCSV(projRows, totalRevenue, forecastRev, MONTHS[month])}>⬇ CSV Raport</button>
               <button className="btn-ghost btn-sm" onClick={exportToExcel}>⬇ Excel</button>
               <button className="btn-ghost btn-sm" onClick={exportToCSV}>⬇ CSV</button>
             </div>
