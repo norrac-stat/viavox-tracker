@@ -268,7 +268,9 @@ export default function App() {
         for (const row of rpcData) {
           // Filter by manager's projects if not admin
           if (myProjIds !== null && !myProjIds.includes(row.project_id)) continue;
-          accumulated[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.hours);
+          // Normalize date to YYYY-MM-DD (RPC may return full ISO string)
+          const dateKey = String(row.work_date).substring(0, 10);
+          accumulated[`${row.project_id}|${row.employee_id}|${dateKey}`] = String(row.hours);
         }
         setHoursMap(accumulated);
         return;
