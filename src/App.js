@@ -1841,7 +1841,7 @@ export default function App() {
 
             return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH, pieceRev, pieceQty, pieceUnit, pieceForecast};
           })
-          .filter(r=>r.h>0)
+          .filter(r=>r.h>0 || r.pieceRev>0)
           .sort((a,b)=>{
             const dir = sortDir==='asc' ? 1 : -1;
             switch(sortCol) {
@@ -1861,7 +1861,7 @@ export default function App() {
 
         const totalForecast = Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100;
         const totalPieceForecast = Math.round(projRows.reduce((s,r)=>s+(r.pieceForecast||0),0)*100)/100;
-        forecastRev = totalForecast;
+        forecastRev = Math.round((totalForecast + totalPieceForecast)*100)/100;
 
         return (
         <div style={{ padding:"24px 28px", maxWidth:"100%" }}>
@@ -1902,6 +1902,7 @@ export default function App() {
                 Przychód — {MONTHS[month]} (do teraz)
               </div>
               <div style={{ fontSize:26, fontWeight:800, color:C.blue }}>{fmt(totalRevenue)} zł</div>
+              {totalPieceRev>0&&<div style={{ fontSize:11, color:"#7B3FA0", marginTop:2 }}>w tym akord: {fmt(totalPieceRev)} zł</div>}
               <div style={{ fontSize:11, color:C.gray4, marginTop:6 }}>Śr. dzienna: {fmt(dailyAvg)} zł · dzień {daysPassed}/{daysTotal}</div>
             </div>
             <div style={{ background:C.white, border:`2px solid #3DAA70`, borderRadius:10, padding:"16px 20px" }}>
@@ -1909,6 +1910,7 @@ export default function App() {
                 Prognoza przychodu — cały {MONTHS[month]}
               </div>
               <div style={{ fontSize:26, fontWeight:800, color:"#3DAA70" }}>{fmt(forecastRev)} zł</div>
+              {totalPieceForecast>0&&<div style={{ fontSize:11, color:"#7B3FA0", marginTop:2 }}>w tym akord: {fmt(totalPieceForecast)} zł</div>}
               <div style={{ fontSize:11, color:C.gray4, marginTop:6 }}>Pozostało {workingDaysLeft} dni rob. × {fmt(dailyAvg)} zł/dzień rob.</div>
             </div>
           </div>
@@ -2039,7 +2041,7 @@ export default function App() {
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.blue }}>{totalAllH}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#1F7A4C", fontSize:13 }}>{fmt(totalRevenue)} zł</td>
-                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:13 }}>{fmt(totalForecast)} zł</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:13 }}>{fmt(forecastRev)} zł</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#7B3FA0", fontSize:13 }}>{totalPieceRev>0?`${fmt(totalPieceRev)} zł`:"—"}</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#7B3FA0", fontSize:13 }}>{totalPieceForecast>0?`${fmt(totalPieceForecast)} zł`:"—"}</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.sH+(r.fSH||0),0)*100)/100}h</td>
