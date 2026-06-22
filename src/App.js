@@ -22,7 +22,7 @@ const C = {
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-*{box-sizing:border-box;margin:0;padding:0}
+*{box-sizing:border-box;margin:0;padding:0}input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}input[type=number]{-moz-appearance:textfield}
 body{background:${C.gray1};font-family:'Inter',sans-serif}
 ::-webkit-scrollbar{height:5px;width:5px}
 ::-webkit-scrollbar-track{background:${C.gray2}}
@@ -860,6 +860,7 @@ export default function App() {
             ["employees","Pracownicy"],
             ["akord","Akord"],
             ...(isAdmin ? [["projects","Projekty"],["managers","Kierownicy"]] : []),
+            ["przeglad","Przegląd"],
             ["report","Raport"],
           ].map(([key,label])=>(
             <button key={key} className={`nav-tab${tab===key?" active":""}`}
@@ -907,6 +908,7 @@ export default function App() {
                 ["akord","📦 Akord"],
                 ["employees","👥 Pracownicy"],
                 ...(isAdmin ? [["projects","📁 Projekty"],["managers","👤 Kierownicy"]] : []),
+                ["przeglad","🗓️ Przegląd"],
                 ["report","📊 Raport"],
               ].map(([key,label])=>(
                 <button key={key} onClick={()=>{setTab(key);setMobileNavOpen(false);}} style={{
@@ -1425,6 +1427,127 @@ export default function App() {
                 </table>
               </div>
             )}
+          </div>
+        );
+      })()}
+
+      {/* ═══ PRZEGLĄD ═══ */}
+      {tab==="przeglad" && (()=>{
+        const days = daysInMonth(year, month);
+        const today = new Date();
+        const todayDay = today.getFullYear()===year && today.getMonth()===month ? today.getDate() : null;
+
+        // For each project+day: sum hours
+        return (
+          <div style={{ display:"flex", flexDirection:"column", height:"100%", overflow:"hidden" }}>
+            {/* toolbar */}
+            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 16px",
+                          borderBottom:`1px solid ${C.gray2}`, background:C.white, flexWrap:"wrap" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <button className="btn-ghost btn-sm" onClick={prevMonth}>‹</button>
+                <span style={{ fontWeight:700, color:C.blue, fontSize:15, minWidth:110, textAlign:"center" }}>
+                  {MONTHS[month]} {year}
+                </span>
+                <button className="btn-ghost btn-sm" onClick={nextMonth}>›</button>
+              </div>
+              <span style={{ fontSize:12, color:C.gray4 }}>
+                Zielony = godziny wpisane · Szary = brak danych · Biały = przyszłość
+              </span>
+            </div>
+
+            <div style={{ flex:1, overflow:"auto" }}>
+              <table style={{ borderCollapse:"collapse", fontSize:11, minWidth: days*38+200 }}>
+                <thead>
+                  <tr style={{ background:C.gray2, position:"sticky", top:0, zIndex:10 }}>
+                    <th style={{ padding:"8px 12px", textAlign:"left", fontWeight:600,
+                                 color:C.gray6, position:"sticky", left:0, background:C.gray2,
+                                 borderRight:`1px solid ${C.gray3}`, minWidth:200, zIndex:11 }}>
+                      PROJEKT
+                    </th>
+                    {Array.from({length:days},(_,i)=>{
+                      const d=i+1;
+                      const dow=new Date(year,month,d).getDay();
+                      const wknd=dow===0||dow===6;
+                      const isToday=todayDay===d;
+                      return (
+                        <th key={d} style={{ padding:"4px 2px", minWidth:34, textAlign:"center",
+                                            color:wknd?C.gray3:isToday?C.blue:C.gray5,
+                                            fontWeight:isToday?700:500, fontSize:10,
+                                            background:isToday?C.blueLight:C.gray2,
+                                            borderRight:`1px solid ${C.gray2}` }}>
+                          <div>{d}</div>
+                          <div style={{fontSize:8}}>{"NWŚCPSS"[dow]}</div>
+                        </th>
+                      );
+                    })}
+                    <th style={{ padding:"8px 6px", textAlign:"center", fontWeight:600,
+                                 color:C.gray6, minWidth:60 }}>Łącznie</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {myProjects.map((proj, ri) => {
+                    const rowBg = ri%2===0 ? C.white : "#F8FAFC";
+                    let projTotal = 0;
+                    return (
+                      <tr key={proj.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
+                        <td style={{ padding:"5px 12px", position:"sticky", left:0,
+                                     background:rowBg, borderRight:`1px solid ${C.gray2}`,
+                                     fontWeight:500, color:C.gray7, whiteSpace:"nowrap", zIndex:1 }}>
+                          <span style={{ color:C.gray4, fontSize:10, marginRight:6 }}>{proj.number}</span>
+                          {proj.name}
+                        </td>
+                        {Array.from({length:days},(_,i)=>{
+                          const d=i+1;
+                          const dow=new Date(year,month,d).getDay();
+                          const wknd=dow===0||dow===6;
+                          const isToday=todayDay===d;
+                          const isFuture = todayDay && d > todayDay;
+                          const h = dayTotal(proj.id, d);
+                          projTotal += h;
+                          const hasPW = getPWDay(proj.id, d) > 0;
+
+                          let bg, color, text;
+                          if (isFuture) {
+                            bg = "transparent"; color = C.gray2; text = "·";
+                          } else if (h > 0) {
+                            bg = "#DCFCE7"; color = "#166534"; text = Math.round(h);
+                          } else if (hasPW) {
+                            bg = "#F3E8FF"; color = "#6B21A8"; text = "A";
+                          } else if (wknd) {
+                            bg = "#FAFAFA"; color = C.gray3; text = "—";
+                          } else {
+                            bg = "#FEF2F2"; color = "#DC2626"; text = "!";
+                          }
+
+                          if (isToday && !isFuture) bg = h>0 ? "#BBF7D0" : hasPW ? "#E9D5FF" : "#FECACA";
+
+                          return (
+                            <td key={d} style={{ padding:"3px 2px", textAlign:"center",
+                                                 background:bg, color, fontWeight:h>0?600:400,
+                                                 fontSize:10, borderRight:`1px solid ${C.gray2}` }}>
+                              {text}
+                            </td>
+                          );
+                        })}
+                        <td style={{ padding:"5px 6px", textAlign:"center", fontWeight:700,
+                                     color:projTotal>0?C.blue:C.gray3, fontSize:11 }}>
+                          {projTotal>0 ? Math.round(projTotal) : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* legenda */}
+            <div style={{ padding:"8px 16px", borderTop:`1px solid ${C.gray2}`,
+                          background:C.white, display:"flex", gap:16, fontSize:11, color:C.gray5 }}>
+              <span><span style={{background:"#DCFCE7",padding:"1px 6px",borderRadius:3,color:"#166534"}}>✓</span> Godziny wpisane</span>
+              <span><span style={{background:"#FEF2F2",padding:"1px 6px",borderRadius:3,color:"#DC2626"}}>!</span> Brak danych</span>
+              <span><span style={{background:"#F3E8FF",padding:"1px 6px",borderRadius:3,color:"#6B21A8"}}>A</span> Tylko akord</span>
+              <span><span style={{background:"#FAFAFA",padding:"1px 6px",borderRadius:3,color:C.gray3}}>—</span> Weekend</span>
+            </div>
           </div>
         );
       })()}
