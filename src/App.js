@@ -253,12 +253,12 @@ export default function App() {
       const to   = toDateStr(year, month, daysInMonth(year, month));
 
       const myProjIds = currentManager.is_admin
-        ? null  // null = no filter, load all
+        ? null
         : mgrProjects.filter(mp => mp.manager_id === currentManager.id).map(mp => mp.project_id);
 
       if (myProjIds !== null && myProjIds.length === 0) return;
 
-      const map = {};
+      const accumulated = {};
       const PAGE = 2000;
       let from_idx = 0;
 
@@ -269,20 +269,22 @@ export default function App() {
           .lte("work_date", to)
           .range(from_idx, from_idx + PAGE - 1);
 
-        // For non-admin with few projects, filter by project
         if (myProjIds !== null && myProjIds.length <= 50) {
           q = q.in("project_id", myProjIds);
         }
 
         const { data, error } = await q;
         if (error || !data || data.length === 0) break;
+
         for (const row of data) {
-          map[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.hours);
+          accumulated[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.hours);
         }
+
         if (data.length < PAGE) break;
         from_idx += PAGE;
       }
-      setHoursMap(map);
+      // Set ONCE after all pages loaded
+      setHoursMap(accumulated);
     }
     loadHours();
   }, [currentManager, year, month, projects, mgrProjects]);
