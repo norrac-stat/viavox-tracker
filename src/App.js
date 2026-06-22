@@ -414,6 +414,15 @@ export default function App() {
     }, 600);
   }
 
+  async function deleteEmployee(empId) {
+    if (!window.confirm("Czy na pewno usunąć tego pracownika? Wszystkie jego godziny zostaną usunięte.")) return;
+    await supabase.from("hours").delete().eq("employee_id", empId);
+    await supabase.from("piece_work").delete().eq("employee_id", empId);
+    await supabase.from("employees").delete().eq("id", empId);
+    setEmployees(prev => prev.filter(e => e.id !== empId));
+    showToast("Pracownik usunięty");
+  }
+
   async function savePieceWork(projId, empId, day, val) {
     const date_str = toDateStr(year, month, day);
     const key = `${projId}|${empId}|${date_str}`;
@@ -1089,16 +1098,22 @@ export default function App() {
         }));
         const PL_MONTHS_SHORT = ["Sty","Lut","Mar","Kwi","Maj","Cze","Lip","Sie","Wrz","Paź","Lis","Gru"];
 
-        // hours for a specific month key
+        // Pre-build cache: empMonthProj[empId][mk][projId] = hours
+        const empMonthCache = {};
+        for (const [k, v] of Object.entries(hoursMap)) {
+          const [kProj, kEmp, kDate] = k.split("|");
+          if (!kEmp || !kDate) continue;
+          const mk = kDate.substring(0, 7);
+          if (!empMonthCache[kEmp]) empMonthCache[kEmp] = {};
+          if (!empMonthCache[kEmp][mk]) empMonthCache[kEmp][mk] = {};
+          empMonthCache[kEmp][mk][kProj] = (empMonthCache[kEmp][mk][kProj] || 0) + (parseFloat(v) || 0);
+        }
+
         function getMonthHours(empId, projId, mk) {
-          let s=0;
-          for(const [k,v] of Object.entries(hoursMap)) {
-            const [kProj, kEmp, kDate] = k.split("|");
-            if(kEmp===empId && kDate && kDate.startsWith(mk) && (projId==="all"||kProj===projId)) {
-              s += parseFloat(v)||0;
-            }
-          }
-          return s;
+          const byProj = empMonthCache[empId]?.[mk];
+          if (!byProj) return 0;
+          if (projId === "all") return Object.values(byProj).reduce((s, v) => s + v, 0);
+          return byProj[projId] || 0;
         }
 
         // filter projects for selector
@@ -1194,6 +1209,16 @@ export default function App() {
                         </td>
                       );
                     })}
+                    {/* delete button - admin only */}
+                    {isAdmin && (
+                      <td style={{ padding:"4px 8px", textAlign:"center" }}>
+                        <button onClick={()=>deleteEmployee(emp.id)}
+                          style={{ background:"none", border:"none", cursor:"pointer",
+                                   color:C.gray3, fontSize:14, padding:"2px 6px",
+                                   borderRadius:4 }}
+                          title="Usuń pracownika">✕</button>
+                      </td>
+                    )}
                     {/* grand total */}
                     <td style={{ padding:"7px 10px", textAlign:"center",
                                  fontWeight:700, color:grandTotal>0?C.blue:C.gray3,
