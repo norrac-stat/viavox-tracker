@@ -252,7 +252,6 @@ export default function App() {
       const from = toDateStr(year, month, 1);
       const to   = toDateStr(year, month, daysInMonth(year, month));
 
-      // Get project IDs for this manager only
       const myProjIds = currentManager.is_admin
         ? projects.map(p => p.id)
         : mgrProjects.filter(mp => mp.manager_id === currentManager.id).map(mp => mp.project_id);
@@ -260,17 +259,18 @@ export default function App() {
       if (myProjIds.length === 0) return;
 
       const map = {};
-      const PAGE = 1000;
+      const PAGE = 2000;
       let from_idx = 0;
+
       while (true) {
         let q = supabase.from("hours")
           .select("project_id,employee_id,work_date,hours")
           .gte("work_date", from)
           .lte("work_date", to)
+          .order("work_date", { ascending: true })
           .range(from_idx, from_idx + PAGE - 1);
 
-        // Filter by manager's projects (max 20 at once for performance)
-        if (!currentManager.is_admin && myProjIds.length <= 20) {
+        if (myProjIds.length <= 40) {
           q = q.in("project_id", myProjIds);
         }
 
@@ -286,6 +286,38 @@ export default function App() {
     }
     loadHours();
   }, [currentManager, year, month, projects, mgrProjects]);
+
+  // ── Load hours for specific project when selected ─────────────────────────
+  useEffect(() => {
+    if (!activeProj || !currentManager) return;
+    // Check if we already have data for this project
+    const hasData = Object.keys(hoursMap).some(k => k.startsWith(activeProj + "|"));
+    if (hasData) return; // already loaded
+
+    async function loadProjectHours() {
+      const from = toDateStr(year, month, 1);
+      const to   = toDateStr(year, month, daysInMonth(year, month));
+      const map  = { ...hoursMap };
+      const PAGE = 2000;
+      let idx = 0;
+      while (true) {
+        const { data, error } = await supabase.from("hours")
+          .select("project_id,employee_id,work_date,hours")
+          .eq("project_id", activeProj)
+          .gte("work_date", from)
+          .lte("work_date", to)
+          .range(idx, idx + PAGE - 1);
+        if (error || !data || data.length === 0) break;
+        for (const row of data) {
+          map[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.hours);
+        }
+        if (data.length < PAGE) break;
+        idx += PAGE;
+      }
+      setHoursMap(map);
+    }
+    loadProjectHours();
+  }, [activeProj, year, month, currentManager]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
   const myProjectIds = useMemo(() => {
