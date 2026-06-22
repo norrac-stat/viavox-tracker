@@ -233,7 +233,8 @@ export default function App() {
           .range(idx, idx + PAGE - 1);
         if (error || !data || data.length === 0) break;
         for (const row of data) {
-          map[`${row.project_id}|${row.employee_id}|${row.work_date}`] = String(row.quantity);
+          const dateKey = String(row.work_date).substring(0, 10);
+          map[`${row.project_id}|${row.employee_id}|${dateKey}`] = String(row.quantity);
         }
         if (data.length < PAGE) break;
         idx += PAGE;
@@ -1575,7 +1576,37 @@ export default function App() {
           return <span style={{color:C.blue, fontSize:10}}>{sortDir==='asc'?' ↑':' ↓'}</span>;
         }
 
-        const totalRevenue = Math.round(myProjects.reduce((s,p)=>s+projRev(p),0)*100)/100;
+        // Piece work revenue per project
+        function projPieceRev(p) {
+          const pr = pieceRates[p.id];
+          if (!pr || !pr.rate) return 0;
+          let total = 0;
+          const days = daysInMonth(year, month);
+          for (let d = 1; d <= days; d++) {
+            const dateKey = toDateStr(year, month, d);
+            const qty = parseFloat(pieceMap[`${p.id}|${employees.find(e=>pieceMap[`${p.id}|${e.id}|${dateKey}`]?.length>0)?.id}|${dateKey}`] || 0);
+            total += getPWDay(p.id, d);
+          }
+          return Math.round(total * pr.rate * 100) / 100;
+        }
+
+        // Better: sum all piece quantities for this project
+        function projPieceRevTotal(p) {
+          const pr = pieceRates[p.id];
+          if (!pr || !pr.rate) return 0;
+          const projKeys = Object.keys(pieceMap).filter(k => k.startsWith(p.id + "|"));
+          const totalQty = projKeys.reduce((s, k) => {
+            const dateStr = k.split("|")[2];
+            if (dateStr && dateStr.substring(0,7) === `${year}-${String(month+1).padStart(2,"0")}`) {
+              return s + (parseFloat(pieceMap[k]) || 0);
+            }
+            return s;
+          }, 0);
+          return Math.round(totalQty * pr.rate * 100) / 100;
+        }
+
+        const totalPieceRev = Math.round(myProjects.reduce((s,p)=>s+projPieceRevTotal(p),0)*100)/100;
+        const totalRevenue = Math.round((myProjects.reduce((s,p)=>s+projRev(p),0) + totalPieceRev)*100)/100;
 
         // Algorytm prognozy: suma prognoz per projekt (każdy projekt ma swoją stawkę)
         const avgRate = 0; // unused at global level — calculated per project below
@@ -1627,7 +1658,8 @@ export default function App() {
             fSH = Math.round(fSH*100)/100;
             fWH = Math.round(fWH*100)/100;
             const forecast = rate>0 ? Math.round((rev + fH*rate)*100)/100 : 0;
-            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH};
+            const pieceRev = projPieceRevTotal(p);
+            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH, pieceRev};
           })
           .filter(r=>r.h>0)
           .sort((a,b)=>{
@@ -1754,6 +1786,7 @@ export default function App() {
                     {label:"Stawka",        col:"rate"},
                     {label:"Przychód",      col:"rev"},
                     {label:"Prognoza",      col:"forecast"},
+                    {label:"Akord",         col:"pieceRev"},
                     {label:"Prog. UZS h",   col:"fSH"},
                     {label:"Prog. UZSO h",  col:"fWH"},
                     {label:"Prog. Total h", col:"fH"},
@@ -1774,9 +1807,9 @@ export default function App() {
               </thead>
               <tbody>
                 {projRows.length===0&&(
-                  <tr><td colSpan={14} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
+                  <tr><td colSpan={15} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
                 )}
-                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH},ri)=>{
+                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH,pieceRev},ri)=>{
                   const pct=h>0?Math.round((sH/h)*100):0; const rowBg=ri%2===0?C.white:"#F8FAFC";
                   return (
                     <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
@@ -1790,6 +1823,7 @@ export default function App() {
                       <td style={{ padding:"8px 10px", textAlign:"center", color:rate>0?C.gray6:C.gray3, fontSize:11 }}>{rate>0?`${rate.toFixed(2)} zł`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:700, color:rev>0?"#1F7A4C":C.gray3, whiteSpace:"nowrap" }}>{rev>0?`${fmt(rev)} zł`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:forecast>0?"#3DAA70":C.gray3, whiteSpace:"nowrap" }}>{forecast>0?`${fmt(forecast)} zł`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:pieceRev>0?"#7B3FA0":C.gray3, whiteSpace:"nowrap" }}>{pieceRev>0?`${fmt(pieceRev)} zł`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", color:"#3DAA70", fontSize:11 }}>{fSH>0?`${Math.round((sH+fSH)*100)/100}h`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", color:C.blue, fontSize:11 }}>{fWH>0?`${Math.round((wH+fWH)*100)/100}h`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:11 }}>{fH>0?`${Math.round((h+fH)*100)/100}h`:"—"}</td>
@@ -1816,6 +1850,7 @@ export default function App() {
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#1F7A4C", fontSize:13 }}>{fmt(totalRevenue)} zł</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:13 }}>{fmt(totalForecast)} zł</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#7B3FA0", fontSize:13 }}>{totalPieceRev>0?`${fmt(totalPieceRev)} zł`:"—"}</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.sH+(r.fSH||0),0)*100)/100}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:C.blue, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.wH+(r.fWH||0),0)*100)/100}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.h+(r.fH||0),0)*100)/100}h</td>
