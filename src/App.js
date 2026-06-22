@@ -1659,7 +1659,39 @@ export default function App() {
             fWH = Math.round(fWH*100)/100;
             const forecast = rate>0 ? Math.round((rev + fH*rate)*100)/100 : 0;
             const pieceRev = projPieceRevTotal(p);
-            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH, pieceRev};
+            const pr = pieceRates[p.id];
+            const pieceQty = pr ? (() => {
+              const projKeys = Object.keys(pieceMap).filter(k => k.startsWith(p.id + "|"));
+              return Math.round(projKeys.reduce((s, k) => {
+                const dateStr = k.split("|")[2];
+                if (dateStr && dateStr.substring(0,7) === `${year}-${String(month+1).padStart(2,"0")}`) {
+                  return s + (parseFloat(pieceMap[k]) || 0);
+                }
+                return s;
+              }, 0)*100)/100;
+            })() : 0;
+            const pieceUnit = pr ? pr.unit : '';
+
+            // Prognoza akordu wg wzorca dni tygodnia
+            let pieceForecast = 0;
+            if (pr && pr.rate > 0) {
+              const pwDowH = [0,0,0,0,0,0,0]; const pwDowC = [0,0,0,0,0,0,0];
+              for (let d=1; d<=daysPassed; d++) {
+                const dqty = getPWDay(p.id, d);
+                if (dqty > 0) {
+                  const dow = new Date(year,month,d).getDay();
+                  pwDowH[dow] += dqty; pwDowC[dow]++;
+                }
+              }
+              const pwDowAvg = pwDowH.map((hh,i) => pwDowC[i]>0 ? hh/pwDowC[i] : 0);
+              let fQty = 0;
+              for (let d=daysPassed+1; d<=daysTotal; d++) {
+                fQty += pwDowAvg[new Date(year,month,d).getDay()];
+              }
+              pieceForecast = Math.round((pieceRev + fQty * pr.rate)*100)/100;
+            }
+
+            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH, pieceRev, pieceQty, pieceUnit, pieceForecast};
           })
           .filter(r=>r.h>0)
           .sort((a,b)=>{
@@ -1680,6 +1712,7 @@ export default function App() {
           });
 
         const totalForecast = Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100;
+        const totalPieceForecast = Math.round(projRows.reduce((s,r)=>s+(r.pieceForecast||0),0)*100)/100;
         forecastRev = totalForecast;
 
         return (
@@ -1787,6 +1820,7 @@ export default function App() {
                     {label:"Przychód",      col:"rev"},
                     {label:"Prognoza",      col:"forecast"},
                     {label:"Akord",         col:"pieceRev"},
+                    {label:"Prog. Akord",   col:"pieceForecast"},
                     {label:"Prog. UZS h",   col:"fSH"},
                     {label:"Prog. UZSO h",  col:"fWH"},
                     {label:"Prog. Total h", col:"fH"},
@@ -1809,7 +1843,7 @@ export default function App() {
                 {projRows.length===0&&(
                   <tr><td colSpan={15} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
                 )}
-                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH,pieceRev},ri)=>{
+                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH,pieceRev,pieceQty,pieceUnit,pieceForecast},ri)=>{
                   const pct=h>0?Math.round((sH/h)*100):0; const rowBg=ri%2===0?C.white:"#F8FAFC";
                   return (
                     <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
@@ -1823,7 +1857,15 @@ export default function App() {
                       <td style={{ padding:"8px 10px", textAlign:"center", color:rate>0?C.gray6:C.gray3, fontSize:11 }}>{rate>0?`${rate.toFixed(2)} zł`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:700, color:rev>0?"#1F7A4C":C.gray3, whiteSpace:"nowrap" }}>{rev>0?`${fmt(rev)} zł`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:forecast>0?"#3DAA70":C.gray3, whiteSpace:"nowrap" }}>{forecast>0?`${fmt(forecast)} zł`:"—"}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:pieceRev>0?"#7B3FA0":C.gray3, whiteSpace:"nowrap" }}>{pieceRev>0?`${fmt(pieceRev)} zł`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:pieceRev>0?"#7B3FA0":C.gray3, whiteSpace:"nowrap" }}>
+                        {pieceRev>0 ? (
+                          <div>
+                            <div style={{fontSize:11,color:C.gray5}}>{Math.round(pieceQty).toLocaleString('pl-PL')} {pieceUnit}</div>
+                            <div>{fmt(pieceRev)} zł</div>
+                          </div>
+                        ) : "—"}
+                      </td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:pieceForecast>0?"#7B3FA0":C.gray3, fontSize:11, whiteSpace:"nowrap" }}>{pieceForecast>0?`${fmt(pieceForecast)} zł`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", color:"#3DAA70", fontSize:11 }}>{fSH>0?`${Math.round((sH+fSH)*100)/100}h`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", color:C.blue, fontSize:11 }}>{fWH>0?`${Math.round((wH+fWH)*100)/100}h`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:11 }}>{fH>0?`${Math.round((h+fH)*100)/100}h`:"—"}</td>
@@ -1851,6 +1893,7 @@ export default function App() {
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#1F7A4C", fontSize:13 }}>{fmt(totalRevenue)} zł</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:13 }}>{fmt(totalForecast)} zł</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#7B3FA0", fontSize:13 }}>{totalPieceRev>0?`${fmt(totalPieceRev)} zł`:"—"}</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#7B3FA0", fontSize:13 }}>{totalPieceForecast>0?`${fmt(totalPieceForecast)} zł`:"—"}</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.sH+(r.fSH||0),0)*100)/100}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", color:C.blue, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.wH+(r.fWH||0),0)*100)/100}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.h+(r.fH||0),0)*100)/100}h</td>
