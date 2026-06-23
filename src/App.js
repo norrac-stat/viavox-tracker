@@ -129,8 +129,10 @@ export default function App() {
   const [managers,   setManagers]   = useState([]);
   const [rates,      setRates]      = useState({});
   const [pieceRates, setPieceRates] = useState({});
-  const [importData,  setImportData]  = useState(null);  // {rows, projId, errors}
-  const [importProj,  setImportProj]  = useState("");     // selected project for import
+  const [importData,      setImportData]      = useState(null);
+  const [importProj,      setImportProj]      = useState("");
+  const [importHoursRows, setImportHoursRows] = useState([]);
+  const [importingHours,  setImportingHours]  = useState(false);
   const [pieceMap,   setPieceMap]   = useState({}); // projId|empId|date -> quantity
   const [reportSortCol, setReportSortCol] = useState('rev');
   const [reportSortDir, setReportSortDir] = useState('desc');
@@ -675,6 +677,58 @@ export default function App() {
 
 
   // ── Export ────────────────────────────────────────────────────────────────
+  async function handleImportHoursFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const XLSX = window.XLSX;
+    if (!XLSX) { showToast("Biblioteka Excel nie załadowana","err"); return; }
+    try {
+      const buf = await file.arrayBuffer();
+      const wb  = XLSX.read(buf, { type:"array", cellDates:true });
+      const ws  = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
+      if (!raw || raw.length < 2) { showToast("Pusty plik","err"); return; }
+
+      const header = raw[0].map(v => String(v).trim());
+      const lastCol  = header.findIndex(h => /nazwisko/i.test(h));
+      const firstCol = header.findIndex(h => /imi/i.test(h));
+      const ukCol    = header.findIndex(h => /^uk$|nr.uk|numer/i.test(h));
+      const stuCol   = header.findIndex(h => /student/i.test(h));
+      const projCol  = header.findIndex(h => /projekt/i.test(h));
+
+      if (lastCol === -1 || firstCol === -1) { showToast("Brak kolumn Nazwisko/Imię","err"); return; }
+
+      // Find date columns
+      const dateCols = [];
+      header.forEach((h, ci) => {
+        if ([lastCol,firstCol,ukCol,stuCol,projCol].includes(ci)) return;
+        const n = parseInt(String(raw[0][ci]));
+        if (n >= 1 && n <= 31) dateCols.push({ ci, day: n });
+        else if (raw[0][ci] instanceof Date) dateCols.push({ ci, day: raw[0][ci].getDate() });
+      });
+
+      const rows = [];
+      for (let ri = 1; ri < raw.length; ri++) {
+        const row = raw[ri];
+        const last  = String(row[lastCol]||"").trim();
+        const first = String(row[firstCol]||"").trim();
+        if (!last || !first || /^---/.test(last)) continue;
+        const uk      = ukCol>=0  ? String(row[ukCol]||"").trim() : "";
+        const student = stuCol>=0 ? /tak|yes|true|1/i.test(String(row[stuCol]||"")) : false;
+        const projNum = projCol>=0 ? String(row[projCol]||"").trim() : "";
+        const hours   = {};
+        dateCols.forEach(({ci,day}) => {
+          const h = parseFloat(row[ci]);
+          if (!isNaN(h) && h > 0 && h <= 24) hours[day] = h;
+        });
+        if (Object.keys(hours).length > 0) rows.push({ last, first, uk, student, projNum, hours });
+      }
+
+      if (rows.length === 0) { showToast("Brak danych do importu","err"); return; }
+      setImportHoursRows(rows);
+    } catch(err) { showToast("Błąd parsowania: "+err.message,"err"); }
+  }
+
   function exportReportCSV(projRows, totalRevenue, forecastRev, monthName) {
     const rows = [[
       "Nr","Projekt","Prac.","UZS",
