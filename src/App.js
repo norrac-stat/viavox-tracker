@@ -128,7 +128,9 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [managers,   setManagers]   = useState([]);
   const [rates,      setRates]      = useState({});
-  const [pieceRates, setPieceRates] = useState({}); // project_id -> {rate, unit}
+  const [pieceRates, setPieceRates] = useState({});
+  const [importData,  setImportData]  = useState(null);  // {rows, projId, errors}
+  const [importProj,  setImportProj]  = useState("");     // selected project for import // project_id -> {rate, unit}
   const [pieceMap,   setPieceMap]   = useState({}); // projId|empId|date -> quantity
   const [reportSortCol, setReportSortCol] = useState('rev');
   const [reportSortDir, setReportSortDir] = useState('desc');
@@ -779,61 +781,87 @@ export default function App() {
 
   function exportToExcel() {
     const XLSX = window.XLSX;
-    if (!XLSX) { exportToCSV(); return; } // fallback to CSV if XLSX not loaded
+    if (!XLSX) { exportToCSV(); return; }
 
     const monthName = MONTHS[month];
     const numDays   = daysInMonth(year, month);
     const wb = XLSX.utils.book_new();
 
-    myProjects.forEach(proj => {
+    // Filter projects - only those with hours (or use activeProj)
+    const exportProjects = activeProj
+      ? myProjects.filter(p => p.id === activeProj)
+      : myProjects.filter(p => {
+          const ep = totalsCache.empProj[p.id] || {};
+          return Object.values(ep).some(h => h > 0);
+        });
+
+    exportProjects.forEach(proj => {
       const ep = totalsCache.empProj[proj.id] || {};
-      const projEmps = employees.filter(e => (ep[e.id] || 0) > 0);
+      const projEmps = employees
+        .filter(e => (ep[e.id] || 0) > 0)
+        .sort((a,b) => a.last_name.localeCompare(b.last_name));
       if (projEmps.length === 0) return;
 
-      const header = ["Nazwisko", "Imię", "Nr UK", "Student",
-        ...Array.from({length: numDays}, (_, i) =>
-          `${i+1}.${String(month+1).padStart(2,"0")}.${year}`),
-        "SUMA"
-      ];
+      // Header row with day numbers and weekday letters
+      const dayHeaders = Array.from({length: numDays}, (_, i) => {
+        const d = i+1;
+        const dow = new Date(year, month, d).getDay();
+        return `${d}
+${"NWŚCPSS"[dow]}`;
+      });
+      const header = ["Nazwisko", "Imię", "Nr UK", "Student", ...dayHeaders, "SUMA"];
       const rows = [header];
 
-      projEmps.forEach(emp => {
-        const vals = [];
-        let suma = 0;
-        for (let d = 1; d <= numDays; d++) {
-          const key = `${proj.id}|${emp.id}|${toDateStr(year, month, d)}`;
-          const h = parseFloat(hoursMap[key]) || 0;
-          vals.push(h > 0 ? h : 0);
-          suma += h;
-        }
-        rows.push([emp.last_name, emp.first_name, emp.uk_number || "",
-          emp.is_student ? "TAK" : "NIE", ...vals,
-          Math.round(suma * 100) / 100]);
-      });
+      // Separate UZS and UZSO
+      const uzs  = projEmps.filter(e => e.is_student);
+      const uzso = projEmps.filter(e => !e.is_student);
 
-      const totals = ["SUMA DZIENNA", "", "", ""];
-      let grandTotal = 0;
-      for (let d = 1; d <= numDays; d++) {
-        const t = projEmps.reduce((s, e) => {
-          const key = `${proj.id}|${e.id}|${toDateStr(year, month, d)}`;
-          return s + (parseFloat(hoursMap[key]) || 0);
-        }, 0);
-        const rounded = Math.round(t * 100) / 100;
-        totals.push(rounded); grandTotal += rounded;
+      const addEmpRow = (emp) => {
+        let suma = 0;
+        const vals = Array.from({length: numDays}, (_, i) => {
+          const h = parseFloat(hoursMap[`${proj.id}|${emp.id}|${toDateStr(year, month, i+1)}`]) || 0;
+          suma += h;
+          return h > 0 ? h : "";
+        });
+        rows.push([emp.last_name, emp.first_name, emp.uk_number||"",
+          emp.is_student?"TAK":"NIE", ...vals, Math.round(suma*100)/100]);
+      };
+
+      if (uzs.length > 0) {
+        rows.push(["--- UZS (Studenci) ---","","","", ...Array(numDays+1).fill("")]);
+        uzs.forEach(addEmpRow);
       }
-      totals.push(Math.round(grandTotal * 100) / 100);
-      rows.push(totals);
+      if (uzso.length > 0) {
+        rows.push(["--- UZSO (Pracownicy) ---","","","", ...Array(numDays+1).fill("")]);
+        uzso.forEach(addEmpRow);
+      }
+
+      // Suma dzienna
+      const sumRow = ["SUMA DZIENNA","","",""];
+      let grand = 0;
+      for (let d = 1; d <= numDays; d++) {
+        const t = Math.round(projEmps.reduce((s,e) =>
+          s + (parseFloat(hoursMap[`${proj.id}|${e.id}|${toDateStr(year,month,d)}`])||0), 0)*100)/100;
+        sumRow.push(t || ""); grand += t;
+      }
+      sumRow.push(Math.round(grand*100)/100);
+      rows.push(sumRow);
 
       const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws['!cols'] = [{wch:18},{wch:14},{wch:12},{wch:8},
+      // Column widths
+      ws['!cols'] = [{wch:20},{wch:14},{wch:10},{wch:8},
         ...Array(numDays).fill({wch:5}),{wch:8}];
-      XLSX.utils.book_append_sheet(wb, ws,
-        ((proj.number ? `[${proj.number}] ` : '') + proj.name).substring(0,31));
+      // Style header row
+      const sheetName = ((proj.number?`[${proj.number}] `:'')+proj.name).substring(0,31);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
     });
 
     if (wb.SheetNames.length === 0) { showToast("Brak danych do eksportu","err"); return; }
-    XLSX.writeFile(wb, `VIAVOX_${monthName}_${year}.xlsx`);
-    showToast(`Pobrano: VIAVOX_${monthName}_${year}.xlsx`);
+    const fname = activeProj
+      ? `VIAVOX_${exportProjects[0]?.number||""}_${monthName}_${year}.xlsx`
+      : `VIAVOX_${monthName}_${year}.xlsx`;
+    XLSX.writeFile(wb, fname);
+    showToast(`Pobrano: ${fname} (${wb.SheetNames.length} arkuszy)`);
   }
 
   function prevMonth() { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); }
@@ -1048,6 +1076,7 @@ export default function App() {
             <div style={{ display:"flex", gap:6, flexShrink:0 }}>
               <button className="btn-ghost btn-sm" onClick={exportToExcel}>⬇ Excel</button>
               <button className="btn-ghost btn-sm" onClick={exportToCSV}>⬇ CSV</button>
+              <button className="btn-ghost btn-sm" onClick={()=>setModal("importHours")}>⬆ Import</button>
               <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Pracownik</button>
             </div>
           </div>
@@ -1115,7 +1144,18 @@ export default function App() {
                               style={{ height:36, padding:0, borderRight:`1px solid ${C.gray2}` }}>
                               <input type="number" min="0" max="24" step="0.5"
                                 placeholder="·" value={val}
-                                onChange={e=>setH(activeProj,emp.id,d,e.target.value)} />
+                                data-emp={emp.id} data-day={d}
+                                onChange={e=>setH(activeProj,emp.id,d,e.target.value)}
+                                onKeyDown={e=>{
+                                  const all=Array.from(document.querySelectorAll('input[data-emp]'));
+                                  const idx=all.indexOf(e.target);
+                                  const cols=days;
+                                  if(e.key==="ArrowRight"){e.preventDefault();all[idx+1]?.focus();}
+                                  else if(e.key==="ArrowLeft"){e.preventDefault();all[idx-1]?.focus();}
+                                  else if(e.key==="ArrowDown"){e.preventDefault();all[idx+cols]?.focus();}
+                                  else if(e.key==="ArrowUp"){e.preventDefault();all[idx-cols]?.focus();}
+                                  else if(e.key==="Enter"){e.preventDefault();all[idx+1]?.focus();}
+                                }} />
                             </td>
                           );
                         })}
@@ -2170,6 +2210,218 @@ export default function App() {
       )}
 
       {/* ═══ MODALS ═══ */}
+
+      {/* ═══ IMPORT GODZIN ═══ */}
+      {modal==="importHours" && (
+        <div className="modal-bg" onClick={()=>{setModal(null);setImportData(null);setImportProj("");}}>
+          <div className="modal" style={{ maxWidth:640, width:"95vw" }} onClick={e=>e.stopPropagation()}>
+            <div style={{ fontWeight:700, fontSize:18, color:C.gray7 }}>⬆ Import godzin z Excel</div>
+
+            {!importData ? (
+              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                <div style={{ fontSize:13, color:C.gray5 }}>
+                  Format pliku: kolumny = dni miesiąca (jako daty lub liczby 1–31),
+                  wiersze = pracownicy. Wymagane kolumny: <b>Nazwisko</b>, <b>Imię</b>.
+                  Opcjonalne: <b>UK</b>, <b>Student</b>.
+                </div>
+
+                <div>
+                  <label className="lbl">Projekt docelowy</label>
+                  <select className="inp" value={importProj} onChange={e=>setImportProj(e.target.value)}>
+                    <option value="">— wybierz projekt —</option>
+                    {myProjects.map(p=>(
+                      <option key={p.id} value={p.id}>[{p.number}] {p.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="lbl">Plik Excel (.xlsx)</label>
+                  <input type="file" accept=".xlsx,.xls,.csv"
+                    style={{ fontSize:13 }}
+                    onChange={async e => {
+                      if (!importProj) { showToast("Wybierz najpierw projekt","err"); return; }
+                      const file = e.target.files[0];
+                      if (!file) return;
+                      const XLSX = window.XLSX;
+                      if (!XLSX) { showToast("Biblioteka Excel nie załadowana","err"); return; }
+
+                      const buf = await file.arrayBuffer();
+                      const wb  = XLSX.read(buf, { type:"array", cellDates:true });
+                      const ws  = wb.Sheets[wb.SheetNames[0]];
+                      const raw = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
+                      if (!raw || raw.length < 2) { showToast("Pusty plik","err"); return; }
+
+                      const header = raw[0].map(v => String(v).trim());
+
+                      // Find name columns
+                      const lastCol  = header.findIndex(h => /nazwisko/i.test(h));
+                      const firstCol = header.findIndex(h => /imi/i.test(h));
+                      const ukCol    = header.findIndex(h => /uk|numer/i.test(h));
+                      const stuCol   = header.findIndex(h => /student/i.test(h));
+
+                      if (lastCol === -1 || firstCol === -1) {
+                        showToast("Brak kolumn Nazwisko/Imię","err"); return;
+                      }
+
+                      // Find date columns - look for date objects or day numbers 1-31
+                      const dateCols = [];
+                      header.forEach((h, ci) => {
+                        if (ci === lastCol || ci === firstCol || ci === ukCol || ci === stuCol) return;
+                        const v = raw[0][ci];
+                        if (v instanceof Date) {
+                          dateCols.push({ ci, date: v.toISOString().substring(0,10) });
+                        } else if (/^\d{1,2}[.\-/]\d{2}/.test(String(v))) {
+                          // dd.mm or dd.mm.yyyy
+                          const parts = String(v).split(/[.\-/]/);
+                          const d = parseInt(parts[0]), m = parseInt(parts[1]);
+                          const yr = parts[2] ? parseInt(parts[2]) : year;
+                          if (d>=1&&d<=31&&m>=1&&m<=12) {
+                            dateCols.push({ ci, date: `${yr}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}` });
+                          }
+                        } else {
+                          const n = parseInt(String(v));
+                          if (n>=1 && n<=31) {
+                            dateCols.push({ ci, date: toDateStr(year, month, n) });
+                          }
+                        }
+                      });
+
+                      if (dateCols.length === 0) {
+                        showToast("Nie znaleziono kolumn z datami","err"); return;
+                      }
+
+                      // Parse rows
+                      const rows = []; const errors = [];
+                      for (let ri = 1; ri < raw.length; ri++) {
+                        const row = raw[ri];
+                        const last  = String(row[lastCol]||"").trim();
+                        const first = String(row[firstCol]||"").trim();
+                        if (!last || !first) continue;
+
+                        const uk      = ukCol>=0  ? String(row[ukCol]||"").trim() : "";
+                        const student = stuCol>=0 ? /tak|yes|true|1/i.test(String(row[stuCol]||"")) : false;
+                        const hours   = [];
+
+                        dateCols.forEach(({ci, date}) => {
+                          const v = row[ci];
+                          const h = parseFloat(v);
+                          if (!isNaN(h) && h > 0 && h <= 24) {
+                            hours.push({ date, h });
+                          }
+                        });
+
+                        if (hours.length > 0) {
+                          rows.push({ last, first, uk, student, hours });
+                        }
+                      }
+
+                      if (rows.length === 0) { showToast("Brak danych do importu","err"); return; }
+                      setImportData({ rows, errors });
+                    }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                <div style={{ background:"#F0FDF4", border:"1px solid #BBF7D0",
+                              borderRadius:8, padding:"10px 14px", fontSize:13 }}>
+                  ✓ Wczytano <b>{importData.rows.length}</b> pracowników,{" "}
+                  <b>{importData.rows.reduce((s,r)=>s+r.hours.length,0)}</b> wpisów godzin
+                </div>
+
+                {/* Preview */}
+                <div style={{ maxHeight:250, overflow:"auto", border:`1px solid ${C.gray2}`,
+                              borderRadius:6, fontSize:12 }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                    <thead>
+                      <tr style={{ background:C.gray2 }}>
+                        <th style={{ padding:"6px 10px", textAlign:"left" }}>Pracownik</th>
+                        <th style={{ padding:"6px 10px", textAlign:"center" }}>Student</th>
+                        <th style={{ padding:"6px 10px", textAlign:"center" }}>Wpisów</th>
+                        <th style={{ padding:"6px 10px", textAlign:"center" }}>Suma h</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importData.rows.map((r,i) => (
+                        <tr key={i} style={{ borderBottom:`1px solid ${C.gray2}` }}>
+                          <td style={{ padding:"5px 10px" }}>{r.last} {r.first}
+                            {r.uk && <span style={{color:C.gray4,fontSize:10,marginLeft:6}}>{r.uk}</span>}
+                          </td>
+                          <td style={{ padding:"5px 10px", textAlign:"center", color:r.student?"#3DAA70":C.gray4 }}>
+                            {r.student?"TAK":"NIE"}
+                          </td>
+                          <td style={{ padding:"5px 10px", textAlign:"center" }}>{r.hours.length}</td>
+                          <td style={{ padding:"5px 10px", textAlign:"center", fontWeight:600, color:C.blue }}>
+                            {Math.round(r.hours.reduce((s,h)=>s+h.h,0)*100)/100}h
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ fontSize:12, color:C.gray5 }}>
+                  Projekt: <b>{myProjects.find(p=>p.id===importProj)?.name}</b>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display:"flex", gap:10, marginTop:4 }}>
+              {importData && (
+                <button className="btn" onClick={async () => {
+                  showToast("Importuję...");
+                  let ok = 0; let err = 0;
+
+                  for (const row of importData.rows) {
+                    // Upsert employee
+                    const { data: empData } = await supabase.from("employees")
+                      .select("id")
+                      .eq("first_name", row.first)
+                      .eq("last_name", row.last)
+                      .limit(1);
+
+                    let empId = empData?.[0]?.id;
+                    if (!empId) {
+                      const { data: newEmp } = await supabase.from("employees")
+                        .insert({ first_name: row.first, last_name: row.last,
+                                  is_student: row.student, uk_number: row.uk })
+                        .select("id").single();
+                      empId = newEmp?.id;
+                    }
+                    if (!empId) { err++; continue; }
+
+                    // Insert hours
+                    for (const { date, h } of row.hours) {
+                      const { error } = await supabase.from("hours")
+                        .upsert({ employee_id: empId, project_id: importProj,
+                                  work_date: date, hours: h },
+                                 { onConflict: "employee_id,project_id,work_date" });
+                      if (error) err++;
+                      else ok++;
+                    }
+                  }
+
+                  // Refresh hours
+                  setImportData(null); setModal(null); setImportProj("");
+                  showToast(`Import zakończony: ${ok} wpisów OK${err>0?" | "+err+" błędów":""}`);
+                }}>
+                  ✓ Importuj do bazy
+                </button>
+              )}
+              <button className="btn-ghost" onClick={()=>{setModal(null);setImportData(null);setImportProj("");}}>
+                Anuluj
+              </button>
+              {importData && (
+                <button className="btn-ghost" onClick={()=>setImportData(null)} style={{marginLeft:"auto"}}>
+                  ← Zmień plik
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {modal==="addEmp"&&(
         <div className="modal-bg" onClick={()=>setModal(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
