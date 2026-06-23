@@ -130,7 +130,7 @@ export default function App() {
   const [rates,      setRates]      = useState({});
   const [pieceRates, setPieceRates] = useState({});
   const [importData,  setImportData]  = useState(null);  // {rows, projId, errors}
-  const [importProj,  setImportProj]  = useState("");     // selected project for import // project_id -> {rate, unit}
+  const [importProj,  setImportProj]  = useState("");     // selected project for import
   const [pieceMap,   setPieceMap]   = useState({}); // projId|empId|date -> quantity
   const [reportSortCol, setReportSortCol] = useState('rev');
   const [reportSortDir, setReportSortDir] = useState('desc');
@@ -2250,6 +2250,7 @@ ${"NWŚCPSS"[dow]}`;
                   <input type="file" accept=".xlsx,.xls,.csv"
                     style={{ fontSize:13 }}
                     onChange={async e => {
+                      try {
                       if (!importProj) { showToast("Wybierz najpierw projekt","err"); return; }
                       const file = e.target.files[0];
                       if (!file) return;
@@ -2328,6 +2329,7 @@ ${"NWŚCPSS"[dow]}`;
 
                       if (rows.length === 0) { showToast("Brak danych do importu","err"); return; }
                       setImportData({ rows, errors });
+                      } catch(err) { showToast("Błąd parsowania: "+err.message,"err"); }
                     }}
                   />
                 </div>
@@ -2572,7 +2574,7 @@ ${"NWŚCPSS"[dow]}`;
             </div>
             <div>
               <label className="lbl">Wybierz plik Excel (.xlsx)</label>
-              <input ref={importHoursRef} type="file" accept=".xlsx,.xls" className="inp"
+              <input type="file" accept=".xlsx,.xls" className="inp"
                 style={{ padding:"7px 10px", cursor:"pointer" }}
                 onChange={handleImportHoursFile} />
             </div>
