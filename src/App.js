@@ -2323,6 +2323,47 @@ ${"NWŚCPSS"[dow]}`;
 
       {/* ═══ MODALS ═══ */}
 
+      {modal==="addEmp"&&(
+        <div className="modal-bg" onClick={()=>setModal(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div style={{ fontWeight:700, fontSize:18, color:C.gray7 }}>+ Dodaj pracownika</div>
+            <div>
+              <label className="lbl">Imię</label>
+              <input className="inp" id="ae-first" placeholder="Imię" autoFocus />
+            </div>
+            <div>
+              <label className="lbl">Nazwisko</label>
+              <input className="inp" id="ae-last" placeholder="Nazwisko" />
+            </div>
+            <div>
+              <label className="lbl">Nr UK (opcjonalnie)</label>
+              <input className="inp" id="ae-uk" placeholder="np. DK1234" />
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <input type="checkbox" id="ae-stu" />
+              <label htmlFor="ae-stu" style={{ fontSize:13, color:C.gray6 }}>Student (UZS)</label>
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <button className="btn" onClick={async()=>{
+                const first = document.getElementById("ae-first").value.trim();
+                const last  = document.getElementById("ae-last").value.trim();
+                const uk    = document.getElementById("ae-uk").value.trim();
+                const stu   = document.getElementById("ae-stu").checked;
+                if(!first||!last){showToast("Podaj imię i nazwisko","err");return;}
+                const {data,error} = await supabase.from("employees")
+                  .insert({first_name:first,last_name:last,is_student:stu,uk_number:uk})
+                  .select().single();
+                if(error){showToast("Błąd: "+error.message,"err");return;}
+                setEmployees(prev=>[...prev,data].sort((a,b)=>a.last_name.localeCompare(b.last_name)));
+                setModal(null);
+                showToast(`Dodano: ${first} ${last}`);
+              }}>Dodaj</button>
+              <button className="btn-ghost" onClick={()=>setModal(null)}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      )}
+
             {modal==="importHours"&&(
         <div className="modal-bg" onClick={()=>{setModal(null);setImportHoursRows([]);}}>
           <div className="modal modal-wide" onClick={e=>e.stopPropagation()} style={{ maxHeight:"82vh", overflowY:"auto" }}>
