@@ -1147,14 +1147,24 @@ ${"NWŚCPSS"[dow]}`;
                                 data-emp={emp.id} data-day={d}
                                 onChange={e=>setH(activeProj,emp.id,d,e.target.value)}
                                 onKeyDown={e=>{
-                                  const all=Array.from(document.querySelectorAll('input[data-emp]'));
-                                  const idx=all.indexOf(e.target);
-                                  const cols=days;
-                                  if(e.key==="ArrowRight"){e.preventDefault();all[idx+1]?.focus();}
-                                  else if(e.key==="ArrowLeft"){e.preventDefault();all[idx-1]?.focus();}
-                                  else if(e.key==="ArrowDown"){e.preventDefault();all[idx+cols]?.focus();}
-                                  else if(e.key==="ArrowUp"){e.preventDefault();all[idx-cols]?.focus();}
-                                  else if(e.key==="Enter"){e.preventDefault();all[idx+1]?.focus();}
+                                  if(!["ArrowRight","ArrowLeft","ArrowDown","ArrowUp","Enter"].includes(e.key)) return;
+                                  e.preventDefault();
+                                  // All inputs indexed as [emp0_day1, emp0_day2, ..., emp0_dayN, emp1_day1, ...]
+                                  const all = Array.from(document.querySelectorAll('input[data-emp]'));
+                                  const idx = all.indexOf(e.target);
+                                  const numDays = days;
+                                  if(e.key==="ArrowRight" || e.key==="Enter"){
+                                    // Next day (same employee or wrap to next)
+                                    all[idx+1]?.focus();
+                                  } else if(e.key==="ArrowLeft"){
+                                    all[idx-1]?.focus();
+                                  } else if(e.key==="ArrowDown"){
+                                    // Same day, next employee
+                                    all[idx+numDays]?.focus();
+                                  } else if(e.key==="ArrowUp"){
+                                    // Same day, prev employee
+                                    all[idx-numDays]?.focus();
+                                  }
                                 }} />
                             </td>
                           );
