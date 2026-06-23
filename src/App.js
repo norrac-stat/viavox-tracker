@@ -729,6 +729,54 @@ export default function App() {
     } catch(err) { showToast("Błąd parsowania: "+err.message,"err"); }
   }
 
+  async function runImportHours() {
+    if (importHoursRows.length === 0) return;
+    setImportingHours(true);
+    let ok = 0; let err = 0;
+
+    for (const row of importHoursRows) {
+      // Find or create employee
+      let { data: empData } = await supabase.from("employees")
+        .select("id").eq("first_name", row.first).eq("last_name", row.last).limit(1);
+      let empId = empData?.[0]?.id;
+
+      if (!empId) {
+        const { data: newEmp } = await supabase.from("employees")
+          .insert({ first_name: row.first, last_name: row.last,
+                    is_student: row.student, uk_number: row.uk||"" })
+          .select("id").single();
+        empId = newEmp?.id;
+      }
+      if (!empId) { err++; continue; }
+
+      // Find project by number or name
+      let projId = null;
+      if (row.projNum) {
+        const { data: projData } = await supabase.from("projects")
+          .select("id").or(`number.eq.${row.projNum},name.ilike.${row.projNum}`).limit(1);
+        projId = projData?.[0]?.id;
+      }
+      // Fall back to active project
+      if (!projId && activeProj) projId = activeProj;
+      if (!projId) { err += Object.keys(row.hours).length; continue; }
+
+      // Insert hours
+      for (const [day, h] of Object.entries(row.hours)) {
+        const date_str = toDateStr(year, month, parseInt(day));
+        const { error } = await supabase.from("hours").upsert(
+          { employee_id: empId, project_id: projId, work_date: date_str, hours: h },
+          { onConflict: "employee_id,project_id,work_date" }
+        );
+        if (error) err++; else ok++;
+      }
+    }
+
+    setImportingHours(false);
+    setImportHoursRows([]);
+    setModal(null);
+    showToast(`Import: ${ok} wpisów OK${err>0?" | "+err+" błędów":""}`);
+  }
+
   function exportReportCSV(projRows, totalRevenue, forecastRev, monthName) {
     const rows = [[
       "Nr","Projekt","Prac.","UZS",
