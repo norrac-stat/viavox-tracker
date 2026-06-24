@@ -2323,6 +2323,80 @@ ${"NWŚCPSS"[dow]}`;
 
       {/* ═══ MODALS ═══ */}
 
+      {/* Dodaj kierownika */}
+      {modal==="addMgr"&&(
+        <div className="modal-bg" onClick={()=>setModal(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div style={{fontWeight:700,fontSize:18,color:C.gray7}}>+ Dodaj kierownika</div>
+            <div>
+              <label className="lbl">Imię i nazwisko</label>
+              <input className="inp" placeholder="np. Jan Kowalski" value={fMgrName}
+                onChange={e=>setFMgrName(e.target.value)} autoFocus />
+            </div>
+            <div>
+              <label className="lbl">PIN (4 cyfry)</label>
+              <input className="inp" placeholder="1234" maxLength={4} value={fMgrPin}
+                onChange={e=>setFMgrPin(e.target.value.replace(/\D/g,"").substring(0,4))} />
+            </div>
+            <div>
+              <label className="lbl">Projekty</label>
+              <div style={{maxHeight:200,overflowY:"auto",border:`1px solid ${C.gray2}`,borderRadius:6,padding:6}}>
+                {myProjects.map(p=>(
+                  <label key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 6px",
+                    borderRadius:4,cursor:"pointer",background:fMgrProjs.includes(p.id)?C.blueLight:"transparent"}}>
+                    <input type="checkbox" checked={fMgrProjs.includes(p.id)}
+                      onChange={e=>setFMgrProjs(prev=>e.target.checked?[...prev,p.id]:prev.filter(x=>x!==p.id))} />
+                    <span style={{fontSize:12}}>[{p.number}] {p.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn" onClick={addManager}
+                disabled={!fMgrName.trim()||fMgrPin.length!==4}>Dodaj</button>
+              <button className="btn-ghost" onClick={()=>setModal(null)}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edytuj kierownika */}
+      {modal==="editMgr"&&editingMgr&&(
+        <div className="modal-bg" onClick={()=>setModal(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div style={{fontWeight:700,fontSize:18,color:C.gray7}}>Edytuj kierownika</div>
+            <div>
+              <label className="lbl">Imię i nazwisko</label>
+              <input className="inp" value={fMgrName}
+                onChange={e=>setFMgrName(e.target.value)} autoFocus />
+            </div>
+            <div>
+              <label className="lbl">Nowy PIN (zostaw puste = bez zmiany)</label>
+              <input className="inp" placeholder="4 cyfry" maxLength={4} value={fMgrPin}
+                onChange={e=>setFMgrPin(e.target.value.replace(/\D/g,"").substring(0,4))} />
+            </div>
+            <div>
+              <label className="lbl">Projekty</label>
+              <div style={{maxHeight:200,overflowY:"auto",border:`1px solid ${C.gray2}`,borderRadius:6,padding:6}}>
+                {myProjects.map(p=>(
+                  <label key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 6px",
+                    borderRadius:4,cursor:"pointer",background:fMgrProjs.includes(p.id)?C.blueLight:"transparent"}}>
+                    <input type="checkbox" checked={fMgrProjs.includes(p.id)}
+                      onChange={e=>setFMgrProjs(prev=>e.target.checked?[...prev,p.id]:prev.filter(x=>x!==p.id))} />
+                    <span style={{fontSize:12}}>[{p.number}] {p.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn" onClick={saveEditMgr}
+                disabled={!fMgrName.trim()}>Zapisz</button>
+              <button className="btn-ghost" onClick={()=>setModal(null)}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {modal==="addEmp"&&(
         <div className="modal-bg" onClick={()=>setModal(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
