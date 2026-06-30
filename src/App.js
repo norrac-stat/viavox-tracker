@@ -163,6 +163,7 @@ export default function App() {
   const [fMgrName,  setFMgrName]  = useState("");
   const [fMgrPin,   setFMgrPin]   = useState("");
   const [fMgrProjs, setFMgrProjs] = useState([]);
+  const [fMgrViewer, setFMgrViewer] = useState(false);
   const [editingMgr,setEditingMgr]= useState(null);
   const [importRows,  setImportRows]  = useState([]); // parsed preview rows
   const [importing,   setImporting]   = useState(false);
@@ -183,7 +184,7 @@ export default function App() {
       setLoading(true);
       // Load critical data first (managers + projects) — show UI faster
       const [{ data: mgrs }, { data: projs }, { data: mp }] = await Promise.all([
-        supabase.from("managers").select("id,name,pin,is_admin").order("name"),
+        supabase.from("managers").select("id,name,pin,is_admin,is_viewer").order("name"),
         supabase.from("projects").select("id,name,number").order("name"),
         supabase.from("manager_projects").select("manager_id,project_id"),
       ]);
@@ -376,7 +377,14 @@ export default function App() {
   }, [employees, empProjFilter, hoursMap, empSearch]);
 
   const days = daysInMonth(year, month);
-  const isAdmin = currentManager?.is_admin;
+  const isAdmin  = currentManager?.is_admin;
+  const isViewer = currentManager?.is_viewer && !isAdmin;
+
+  useEffect(() => {
+    if (isViewer && tab !== "przeglad" && tab !== "report") {
+      setTab("przeglad");
+    }
+  }, [isViewer, tab]);
 
   // ── Hours helpers ─────────────────────────────────────────────────────────
   function getPW(projId, empId, day) {
@@ -540,7 +548,7 @@ export default function App() {
   async function addManager() {
     if (!fMgrName.trim() || fMgrPin.length !== 4) return;
     const { data, error } = await supabase.from("managers").insert({
-      name: fMgrName.trim(), pin: fMgrPin, is_admin: false,
+      name: fMgrName.trim(), pin: fMgrPin, is_admin: false, is_viewer: fMgrViewer,
     }).select().single();
     if (error) { showToast("Błąd zapisu", "err"); return; }
     if (fMgrProjs.length > 0) {
@@ -550,12 +558,12 @@ export default function App() {
       setMgrProjects(prev => [...prev, ...fMgrProjs.map(pid => ({ manager_id: data.id, project_id: pid }))]);
     }
     setManagers(prev => [...prev, data].sort((a,b) => a.name.localeCompare(b.name)));
-    setFMgrName(""); setFMgrPin(""); setFMgrProjs([]);
+    setFMgrName(""); setFMgrPin(""); setFMgrProjs([]); setFMgrViewer(false);
     setModal(null); showToast("Kierownik dodany");
   }
 
   async function saveEditMgr() {
-    const updates = { name: fMgrName };
+    const updates = { name: fMgrName, is_viewer: fMgrViewer };
     if (fMgrPin.length === 4) updates.pin = fMgrPin;
     const { error } = await supabase.from("managers").update(updates).eq("id", editingMgr.id);
     if (error) { showToast("Błąd zapisu", "err"); return; }
@@ -584,6 +592,7 @@ export default function App() {
   function openEditMgr(mgr) {
     setEditingMgr(mgr); setFMgrName(mgr.name); setFMgrPin("");
     setFMgrProjs(mgrProjects.filter(mp => mp.manager_id === mgr.id).map(mp => mp.project_id));
+    setFMgrViewer(!!mgr.is_viewer);
     setModal("editMgr");
   }
 
@@ -1052,14 +1061,17 @@ ${"NWŚCPSS"[dow]}`;
 
         {/* Desktop tabs */}
         <div className="top-bar-tabs" style={{ display:"flex" }}>
-          {[
+          {(isViewer ? [
+            ["przeglad","Przegląd"],
+            ["report","Raport"],
+          ] : [
             ["timesheet","Timesheet"],
             ["employees","Pracownicy"],
             ["akord","Akord"],
             ...(isAdmin ? [["projects","Projekty"],["managers","Kierownicy"]] : []),
             ["przeglad","Przegląd"],
             ["report","Raport"],
-          ].map(([key,label])=>(
+          ]).map(([key,label])=>(
             <button key={key} className={`nav-tab${tab===key?" active":""}`}
               onClick={()=>setTab(key)}>{label}</button>
           ))}
@@ -1070,7 +1082,7 @@ ${"NWŚCPSS"[dow]}`;
             <div style={{ textAlign:"right" }}>
               <div style={{ fontSize:13, fontWeight:600, color:C.gray6 }}>{currentManager.name}</div>
               <div style={{ fontSize:11, color:C.gray4 }}>
-                {isAdmin?"Administrator":`${myProjects.length} projekt${myProjects.length===1?"":"ów"}`}
+                {isAdmin?"Administrator":isViewer?`Podgląd · ${myProjects.length} projekt${myProjects.length===1?"":"ów"}`:`${myProjects.length} projekt${myProjects.length===1?"":"ów"}`}
               </div>
             </div>
           )}
@@ -1097,17 +1109,20 @@ ${"NWŚCPSS"[dow]}`;
             <div style={{ padding:"0 20px 16px", borderBottom:`1px solid ${C.gray2}` }}>
               <Logo size={20} />
               <div style={{ fontSize:13, fontWeight:600, color:C.gray6, marginTop:10 }}>{currentManager.name}</div>
-              <div style={{ fontSize:11, color:C.gray4 }}>{isAdmin?"Administrator":`${myProjects.length} projektów`}</div>
+              <div style={{ fontSize:11, color:C.gray4 }}>{isAdmin?"Administrator":isViewer?`Podgląd · ${myProjects.length} projektów`:`${myProjects.length} projektów`}</div>
             </div>
             <div style={{ flex:1, padding:"12px 0" }}>
-              {[
+              {(isViewer ? [
+                ["przeglad","🗓️ Przegląd"],
+                ["report","📊 Raport"],
+              ] : [
                 ["timesheet","📋 Timesheet"],
                 ["akord","📦 Akord"],
                 ["employees","👥 Pracownicy"],
                 ...(isAdmin ? [["projects","📁 Projekty"],["managers","👤 Kierownicy"]] : []),
                 ["przeglad","🗓️ Przegląd"],
                 ["report","📊 Raport"],
-              ].map(([key,label])=>(
+              ]).map(([key,label])=>(
                 <button key={key} onClick={()=>{setTab(key);setMobileNavOpen(false);}} style={{
                   display:"block", width:"100%", textAlign:"left",
                   padding:"12px 20px", background: tab===key ? C.blueLight : "none",
@@ -1847,7 +1862,7 @@ ${"NWŚCPSS"[dow]}`;
           <div style={{ display:"flex", alignItems:"center", marginBottom:20 }}>
             <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Kierownicy</div>
             <button className="btn btn-sm" style={{ marginLeft:"auto" }}
-              onClick={()=>{setFMgrName("");setFMgrPin("");setFMgrProjs([]);setModal("addMgr");}}>
+              onClick={()=>{setFMgrName("");setFMgrPin("");setFMgrProjs([]);setFMgrViewer(false);setModal("addMgr");}}>
               + Dodaj kierownika
             </button>
           </div>
@@ -1869,6 +1884,11 @@ ${"NWŚCPSS"[dow]}`;
                       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
                         <span style={{ fontWeight:600, fontSize:14, color:C.gray7 }}>{mgr.name}</span>
                         {mgr.is_admin&&<span className="tag-a">ADMIN</span>}
+                        {mgr.is_viewer&&!mgr.is_admin&&
+                          <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px",
+                                        borderRadius:10, background:"#EDE9FE", color:"#6D28D9" }}>
+                            PODGLĄD
+                          </span>}
                       </div>
                       <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
                         {mgr.is_admin
@@ -2356,6 +2376,13 @@ ${"NWŚCPSS"[dow]}`;
                 ))}
               </div>
             </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
+              <input type="checkbox" id="mgr-viewer-add" checked={fMgrViewer}
+                onChange={e=>setFMgrViewer(e.target.checked)} />
+              <label htmlFor="mgr-viewer-add" style={{fontSize:13,color:C.gray6}}>
+                Rola "Podgląd" — widzi tylko zakładki Przegląd i Raport (bez edycji godzin)
+              </label>
+            </div>
             <div style={{display:"flex",gap:10}}>
               <button className="btn" onClick={addManager}
                 disabled={!fMgrName.trim()||fMgrPin.length!==4}>Dodaj</button>
@@ -2392,6 +2419,13 @@ ${"NWŚCPSS"[dow]}`;
                   </label>
                 ))}
               </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
+              <input type="checkbox" id="mgr-viewer-edit" checked={fMgrViewer}
+                onChange={e=>setFMgrViewer(e.target.checked)} />
+              <label htmlFor="mgr-viewer-edit" style={{fontSize:13,color:C.gray6}}>
+                Rola "Podgląd" — widzi tylko zakładki Przegląd i Raport (bez edycji godzin)
+              </label>
             </div>
             <div style={{display:"flex",gap:10}}>
               <button className="btn" onClick={saveEditMgr}
