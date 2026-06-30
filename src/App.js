@@ -1902,6 +1902,11 @@ ${"NWŚCPSS"[dow]}`;
         const daysTotal  = daysInMonth(year, month);
         const daysPassed = (year===today.getFullYear()&&month===today.getMonth()) ? today.getDate() : daysTotal;
         const daysLeft   = daysTotal - daysPassed;
+        // Wzorzec dnia tygodnia liczymy tylko z dni W PEŁNI zamkniętych —
+        // dzisiejszy dzień (jeśli trwa) może być jeszcze nieuzupełniony przez część projektów,
+        // więc nie wliczamy go do bazy wzorca (żeby nie zaniżać prognozy).
+        const isCurrentMonth = year===today.getFullYear() && month===today.getMonth();
+        const patternDaysPassed = isCurrentMonth ? Math.max(0, today.getDate()-1) : daysTotal;
 
         // Dni robocze per miesiąc (bez weekendów i świąt)
         const WORKING_DAYS = {
@@ -2002,7 +2007,7 @@ ${"NWŚCPSS"[dow]}`;
             const pDowH  = [0,0,0,0,0,0,0]; const pDowC  = [0,0,0,0,0,0,0];
             const pDowSH = [0,0,0,0,0,0,0]; const pDowSC = [0,0,0,0,0,0,0];
             const pDowWH = [0,0,0,0,0,0,0]; const pDowWC = [0,0,0,0,0,0,0];
-            for (let d=1;d<=daysPassed;d++){
+            for (let d=1;d<=patternDaysPassed;d++){
               const dow=new Date(year,month,d).getDay();
               const dh=dayTotal(p.id,d);
               if(dh>0){ pDowH[dow]+=dh; pDowC[dow]++; }
@@ -2043,7 +2048,7 @@ ${"NWŚCPSS"[dow]}`;
             let pieceForecast = 0;
             if (pr && pr.rate > 0) {
               const pwDowH = [0,0,0,0,0,0,0]; const pwDowC = [0,0,0,0,0,0,0];
-              for (let d=1; d<=daysPassed; d++) {
+              for (let d=1; d<=patternDaysPassed; d++) {
                 const dqty = getPWDay(p.id, d);
                 if (dqty > 0) {
                   const dow = new Date(year,month,d).getDay();
