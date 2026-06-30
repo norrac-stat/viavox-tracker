@@ -183,12 +183,19 @@ export default function App() {
     async function loadAll() {
       setLoading(true);
       // Load critical data first (managers + projects) — show UI faster
-      const [{ data: mgrs }, { data: projs }, { data: mp }] = await Promise.all([
+      const [{ data: mgrs, error: mgrsErr }, { data: projs }, { data: mp }] = await Promise.all([
         supabase.from("managers").select("id,name,pin,is_admin,is_viewer").order("name"),
         supabase.from("projects").select("id,name,number").order("name"),
         supabase.from("manager_projects").select("manager_id,project_id"),
       ]);
-      setManagers(mgrs || []);
+      if (mgrsErr) {
+        // Fallback: is_viewer column may not exist yet — retry without it
+        const { data: mgrsFallback } = await supabase
+          .from("managers").select("id,name,pin,is_admin").order("name");
+        setManagers((mgrsFallback || []).map(m => ({ ...m, is_viewer: false })));
+      } else {
+        setManagers(mgrs || []);
+      }
       setProjects(projs || []);
       setMgrProjects(mp || []);
       setLoading(false);
@@ -1068,7 +1075,7 @@ ${"NWŚCPSS"[dow]}`;
             ["timesheet","Timesheet"],
             ["employees","Pracownicy"],
             ["akord","Akord"],
-            ...(isAdmin ? [["projects","Projekty"],["managers","Kierownicy"]] : []),
+            ...(isAdmin ? [["projects","Projekty"],["managers","Użytkownicy"]] : []),
             ["przeglad","Przegląd"],
             ["report","Raport"],
           ]).map(([key,label])=>(
@@ -1119,7 +1126,7 @@ ${"NWŚCPSS"[dow]}`;
                 ["timesheet","📋 Timesheet"],
                 ["akord","📦 Akord"],
                 ["employees","👥 Pracownicy"],
-                ...(isAdmin ? [["projects","📁 Projekty"],["managers","👤 Kierownicy"]] : []),
+                ...(isAdmin ? [["projects","📁 Projekty"],["managers","👤 Użytkownicy"]] : []),
                 ["przeglad","🗓️ Przegląd"],
                 ["report","📊 Raport"],
               ]).map(([key,label])=>(
@@ -1860,7 +1867,7 @@ ${"NWŚCPSS"[dow]}`;
       {tab==="managers"&&isAdmin&&(
         <div style={{ padding:"24px 28px", maxWidth:700 }}>
           <div style={{ display:"flex", alignItems:"center", marginBottom:20 }}>
-            <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Kierownicy</div>
+            <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Użytkownicy</div>
             <button className="btn btn-sm" style={{ marginLeft:"auto" }}
               onClick={()=>{setFMgrName("");setFMgrPin("");setFMgrProjs([]);setFMgrViewer(false);setModal("addMgr");}}>
               + Dodaj kierownika
