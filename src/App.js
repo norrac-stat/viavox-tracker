@@ -164,6 +164,10 @@ export default function App() {
   const [fMgrPin,   setFMgrPin]   = useState("");
   const [fMgrProjs, setFMgrProjs] = useState([]);
   const [fMgrViewer, setFMgrViewer] = useState(false);
+  const [auditLog,       setAuditLog]       = useState([]);
+  const [auditLoading,   setAuditLoading]   = useState(false);
+  const [auditEmpFilter, setAuditEmpFilter] = useState("");
+  const [auditProjFilter,setAuditProjFilter]= useState("");
   const [editingMgr,setEditingMgr]= useState(null);
   const [importRows,  setImportRows]  = useState([]); // parsed preview rows
   const [importing,   setImporting]   = useState(false);
@@ -393,6 +397,28 @@ export default function App() {
     }
   }, [isViewer, tab]);
 
+  // ── Historia zmian (Admin only) — ładuje się gdy zakładka jest aktywna ────
+  useEffect(() => {
+    if (tab !== "historia" || !isAdmin) return;
+    let cancelled = false;
+    async function loadAuditLog() {
+      setAuditLoading(true);
+      let q = supabase.from("audit_log")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (auditEmpFilter)  q = q.ilike("employee_name", `%${auditEmpFilter}%`);
+      if (auditProjFilter) q = q.eq("project_id", auditProjFilter);
+      const { data, error } = await q;
+      if (!cancelled) {
+        if (error) setAuditLog([]); else setAuditLog(data || []);
+        setAuditLoading(false);
+      }
+    }
+    loadAuditLog();
+    return () => { cancelled = true; };
+  }, [tab, isAdmin, auditEmpFilter, auditProjFilter]);
+
   // ── Hours helpers ─────────────────────────────────────────────────────────
   function getPW(projId, empId, day) {
     const key = `${projId}|${empId}|${toDateStr(year, month, day)}`;
@@ -412,9 +438,30 @@ export default function App() {
     return hoursMap[key] ?? "";
   }
 
+  // ── Audit log (tylko zapis — czytane przez Admina w zakładce Historia) ────
+  async function logAudit({ actionType, employeeId, projectId, workDate, oldValue, newValue }) {
+    try {
+      const emp  = employees.find(e => e.id === employeeId);
+      const proj = projects.find(p => p.id === projectId);
+      await supabase.from("audit_log").insert({
+        manager_id: currentManager?.id || null,
+        manager_name: currentManager?.name || "—",
+        action_type: actionType,
+        employee_id: employeeId,
+        employee_name: emp ? `${emp.first_name} ${emp.last_name}` : "—",
+        project_id: projectId,
+        project_name: proj ? `[${proj.number}] ${proj.name}` : "—",
+        work_date: workDate,
+        old_value: oldValue===""||oldValue===null||oldValue===undefined ? null : parseFloat(oldValue),
+        new_value: newValue===""||newValue===null||newValue===undefined ? null : parseFloat(newValue),
+      });
+    } catch(e) { /* nie blokuj UI jeśli log się nie zapisze */ }
+  }
+
   function setH(projId, empId, day, val) {
     const dateStr = toDateStr(year, month, day);
     const key = `${projId}|${empId}|${dateStr}`;
+    const oldVal = hoursMap[key] ?? "";
     setHoursMap(prev => ({ ...prev, [key]: val }));
 
     // debounce save
@@ -429,6 +476,10 @@ export default function App() {
           project_id: projId, employee_id: empId,
           work_date: dateStr, hours: num,
         }, { onConflict: "project_id,employee_id,work_date" });
+      }
+      if (String(oldVal) !== String(val)) {
+        logAudit({ actionType:"hours", employeeId:empId, projectId:projId,
+                   workDate:dateStr, oldValue:oldVal, newValue:val });
       }
     }, 600);
   }
@@ -445,6 +496,7 @@ export default function App() {
   async function savePieceWork(projId, empId, day, val) {
     const date_str = toDateStr(year, month, day);
     const key = `${projId}|${empId}|${date_str}`;
+    const oldVal = pieceMap[key] ?? "";
     const qty = parseFloat(val);
     if (val === "" || isNaN(qty)) {
       await supabase.from("piece_work").delete()
@@ -455,6 +507,10 @@ export default function App() {
         employee_id: empId, project_id: projId, work_date: date_str, quantity: qty
       }, { onConflict: "employee_id,project_id,work_date" });
       setPieceMap(prev => ({ ...prev, [key]: String(qty) }));
+    }
+    if (String(oldVal) !== String(val)) {
+      logAudit({ actionType:"piece_work", employeeId:empId, projectId:projId,
+                 workDate:date_str, oldValue:oldVal, newValue:val });
     }
   }
 
@@ -1075,7 +1131,7 @@ ${"NWŚCPSS"[dow]}`;
             ["timesheet","Timesheet"],
             ["employees","Pracownicy"],
             ["akord","Akord"],
-            ...(isAdmin ? [["projects","Projekty"],["managers","Użytkownicy"]] : []),
+            ...(isAdmin ? [["projects","Projekty"],["managers","Użytkownicy"],["historia","Historia"]] : []),
             ["przeglad","Przegląd"],
             ["report","Raport"],
           ]).map(([key,label])=>(
@@ -1126,7 +1182,7 @@ ${"NWŚCPSS"[dow]}`;
                 ["timesheet","📋 Timesheet"],
                 ["akord","📦 Akord"],
                 ["employees","👥 Pracownicy"],
-                ...(isAdmin ? [["projects","📁 Projekty"],["managers","👤 Użytkownicy"]] : []),
+                ...(isAdmin ? [["projects","📁 Projekty"],["managers","👤 Użytkownicy"],["historia","🕓 Historia"]] : []),
                 ["przeglad","🗓️ Przegląd"],
                 ["report","📊 Raport"],
               ]).map(([key,label])=>(
@@ -1922,6 +1978,82 @@ ${"NWŚCPSS"[dow]}`;
           </div>
         </div>
       )}
+
+      {/* ═══ HISTORIA (Admin only) ═══ */}
+      {tab==="historia"&&isAdmin&&(()=>{
+        const fmtDateTime = (iso) => {
+          if (!iso) return "—";
+          const d = new Date(iso);
+          return d.toLocaleString("pl-PL", { day:"2-digit", month:"2-digit", year:"numeric",
+            hour:"2-digit", minute:"2-digit" });
+        };
+
+        return (
+          <div style={{ padding:"24px 28px" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20, flexWrap:"wrap" }}>
+              <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Historia zmian</div>
+              <span style={{ fontSize:12, color:C.gray4 }}>(widoczne tylko dla Admina)</span>
+              <input className="inp" placeholder="Filtruj po pracowniku..." value={auditEmpFilter}
+                onChange={e=>setAuditEmpFilter(e.target.value)}
+                style={{ maxWidth:220, padding:"6px 10px", fontSize:12, marginLeft:"auto" }} />
+              <select className="inp" value={auditProjFilter} onChange={e=>setAuditProjFilter(e.target.value)}
+                style={{ maxWidth:220, padding:"6px 10px", fontSize:12 }}>
+                <option value="">— wszystkie projekty —</option>
+                {projects.map(p=>(
+                  <option key={p.id} value={p.id}>[{p.number}] {p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ background:C.white, border:`1px solid ${C.gray3}`,
+                          borderRadius:10, overflow:"hidden" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead>
+                  <tr style={{ background:C.gray2 }}>
+                    <th style={{ padding:"8px 10px", textAlign:"left", fontSize:10, color:C.gray5 }}>Data zmiany</th>
+                    <th style={{ padding:"8px 10px", textAlign:"left", fontSize:10, color:C.gray5 }}>Kierownik</th>
+                    <th style={{ padding:"8px 10px", textAlign:"left", fontSize:10, color:C.gray5 }}>Typ</th>
+                    <th style={{ padding:"8px 10px", textAlign:"left", fontSize:10, color:C.gray5 }}>Pracownik</th>
+                    <th style={{ padding:"8px 10px", textAlign:"left", fontSize:10, color:C.gray5 }}>Projekt</th>
+                    <th style={{ padding:"8px 10px", textAlign:"center", fontSize:10, color:C.gray5 }}>Dzień</th>
+                    <th style={{ padding:"8px 10px", textAlign:"center", fontSize:10, color:C.gray5 }}>Było</th>
+                    <th style={{ padding:"8px 10px", textAlign:"center", fontSize:10, color:C.gray5 }}>Jest</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditLoading ? (
+                    <tr><td colSpan={8} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Ładowanie…</td></tr>
+                  ) : auditLog.length===0 ? (
+                    <tr><td colSpan={8} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak wpisów w historii.</td></tr>
+                  ) : auditLog.map((row, ri) => (
+                    <tr key={row.id} style={{ background:ri%2===0?C.white:"#F8FAFC",
+                                              borderBottom:`1px solid ${C.gray2}` }}>
+                      <td style={{ padding:"6px 10px", whiteSpace:"nowrap", color:C.gray6 }}>{fmtDateTime(row.created_at)}</td>
+                      <td style={{ padding:"6px 10px", color:C.gray6 }}>{row.manager_name||"—"}</td>
+                      <td style={{ padding:"6px 10px" }}>
+                        <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:8,
+                          background: row.action_type==="piece_work" ? "#F3E8FF" : "#DBEAFE",
+                          color: row.action_type==="piece_work" ? "#6B21A8" : "#1E40AF" }}>
+                          {row.action_type==="piece_work" ? "Akord" : "Godziny"}
+                        </span>
+                      </td>
+                      <td style={{ padding:"6px 10px", color:C.gray7 }}>{row.employee_name||"—"}</td>
+                      <td style={{ padding:"6px 10px", color:C.gray6, fontSize:11 }}>{row.project_name||"—"}</td>
+                      <td style={{ padding:"6px 10px", textAlign:"center", color:C.gray5 }}>{row.work_date||"—"}</td>
+                      <td style={{ padding:"6px 10px", textAlign:"center", color:"#DC2626" }}>
+                        {row.old_value===null?"—":row.old_value}
+                      </td>
+                      <td style={{ padding:"6px 10px", textAlign:"center", color:"#166534", fontWeight:600 }}>
+                        {row.new_value===null?"—":row.new_value}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ═══ REPORT ═══ */}
       {tab==="report" && (()=>{
