@@ -1464,7 +1464,7 @@ ${"NWŚCPSS"[dow]}`;
               {filteredEmpsTab.map((emp,ri)=>{
                 const rowBg = ri%2===0 ? C.white : "#F8FAFC";
                 const monthTotals = monthCols.map(({key})=>getMonthHours(emp.id, activeFilter, key));
-                const grandTotal  = monthTotals.reduce((s,v)=>s+v,0);
+                const grandTotal  = Math.round(monthTotals.reduce((s,v)=>s+v,0)*100)/100;
                 const maxH = Math.max(...monthTotals, 1);
                 return (
                   <tr key={emp.id} className="emp-row"
@@ -1502,7 +1502,7 @@ ${"NWŚCPSS"[dow]}`;
                                               background: isCurrent ? "#F0F7FF" : "transparent" }}>
                           {h>0
                             ? <span style={{ fontWeight:600, color:isCurrent?C.blue:C.gray6, fontSize:12 }}>
-                                {Math.round(h*100)/100}h
+                                {h.toFixed(2)}h
                               </span>
                             : <span style={{ color:C.gray3 }}>—</span>}
                         </td>
@@ -1523,7 +1523,7 @@ ${"NWŚCPSS"[dow]}`;
                                  fontWeight:700, color:grandTotal>0?C.blue:C.gray3,
                                  background: grandTotal>0 ? C.blueLight : "transparent",
                                  fontSize:12, borderLeft:`1px solid ${C.blueMid}` }}>
-                      {grandTotal>0?`${grandTotal}h`:"—"}
+                      {grandTotal>0?`${grandTotal.toFixed(2)}h`:"—"}
                     </td>
                   </tr>
                 );
