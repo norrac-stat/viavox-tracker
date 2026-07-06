@@ -165,6 +165,7 @@ export default function App() {
   const [fMgrPin,   setFMgrPin]   = useState("");
   const [fMgrProjs, setFMgrProjs] = useState([]);
   const [fMgrViewer, setFMgrViewer] = useState(false);
+  const [fMgrActive, setFMgrActive] = useState(true);
   const [auditLog,       setAuditLog]       = useState([]);
   const [auditLoading,   setAuditLoading]   = useState(false);
   const [auditEmpFilter, setAuditEmpFilter] = useState("");
@@ -189,14 +190,14 @@ export default function App() {
       setLoading(true);
       // Load critical data first (managers + projects) — show UI faster
       const [{ data: mgrs, error: mgrsErr }, { data: projs }, { data: mp }] = await Promise.all([
-        supabase.from("managers").select("id,name,pin,is_admin,is_viewer").order("name"),
+        supabase.from("managers").select("id,name,pin,is_admin,is_viewer,is_active").order("name"),
         supabase.from("projects").select("id,name,number").order("name"),
         supabase.from("manager_projects").select("manager_id,project_id"),
       ]);
       if (mgrsErr) {
         // Fallback: is_viewer column may not exist yet — retry without it
         const { data: mgrsFallback } = await supabase
-          .from("managers").select("id,name,pin,is_admin").order("name");
+          .from("managers").select("id,name,pin,is_admin,is_active").order("name");
         setManagers((mgrsFallback || []).map(m => ({ ...m, is_viewer: false })));
       } else {
         setManagers(mgrs || []);
@@ -644,7 +645,7 @@ export default function App() {
   async function addManager() {
     if (!fMgrName.trim() || fMgrPin.length !== 4) return;
     const { data, error } = await supabase.from("managers").insert({
-      name: fMgrName.trim(), pin: fMgrPin, is_admin: false, is_viewer: fMgrViewer,
+      name: fMgrName.trim(), pin: fMgrPin, is_admin: false, is_viewer: fMgrViewer, is_active: fMgrActive,
     }).select().single();
     if (error) { showToast("Błąd zapisu", "err"); return; }
     if (fMgrProjs.length > 0) {
@@ -654,12 +655,12 @@ export default function App() {
       setMgrProjects(prev => [...prev, ...fMgrProjs.map(pid => ({ manager_id: data.id, project_id: pid }))]);
     }
     setManagers(prev => [...prev, data].sort((a,b) => a.name.localeCompare(b.name)));
-    setFMgrName(""); setFMgrPin(""); setFMgrProjs([]); setFMgrViewer(false);
+    setFMgrName(""); setFMgrPin(""); setFMgrProjs([]); setFMgrViewer(false); setFMgrActive(true);
     setModal(null); showToast("Kierownik dodany");
   }
 
   async function saveEditMgr() {
-    const updates = { name: fMgrName, is_viewer: fMgrViewer };
+    const updates = { name: fMgrName, is_viewer: fMgrViewer, is_active: fMgrActive };
     if (fMgrPin.length === 4) updates.pin = fMgrPin;
     const { error } = await supabase.from("managers").update(updates).eq("id", editingMgr.id);
     if (error) { showToast("Błąd zapisu", "err"); return; }
@@ -689,6 +690,7 @@ export default function App() {
     setEditingMgr(mgr); setFMgrName(mgr.name); setFMgrPin("");
     setFMgrProjs(mgrProjects.filter(mp => mp.manager_id === mgr.id).map(mp => mp.project_id));
     setFMgrViewer(!!mgr.is_viewer);
+    setFMgrActive(mgr.is_active !== false);
     setModal("editMgr");
   }
 
@@ -1103,7 +1105,7 @@ ${"NWŚCPSS"[dow]}`;
             <select className="inp" value={selMgrId}
               onChange={e=>{setSelMgrId(e.target.value);setPinInput("");setLoginError("");}}>
               <option value="">— wybierz —</option>
-              {managers.map(m=>(
+              {managers.filter(m => m.is_active !== false).map(m=>(
                 <option key={m.id} value={m.id}>{m.name}{m.is_admin?" (Admin)":""}</option>
               ))}
             </select>
@@ -1958,7 +1960,7 @@ ${"NWŚCPSS"[dow]}`;
           <div style={{ display:"flex", alignItems:"center", marginBottom:20 }}>
             <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Użytkownicy</div>
             <button className="btn btn-sm" style={{ marginLeft:"auto" }}
-              onClick={()=>{setFMgrName("");setFMgrPin("");setFMgrProjs([]);setFMgrViewer(false);setModal("addMgr");}}>
+              onClick={()=>{setFMgrName("");setFMgrPin("");setFMgrProjs([]);setFMgrViewer(false);setFMgrActive(true);setModal("addMgr");}}>
               + Dodaj kierownika
             </button>
           </div>
@@ -1984,6 +1986,11 @@ ${"NWŚCPSS"[dow]}`;
                           <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px",
                                         borderRadius:10, background:"#EDE9FE", color:"#6D28D9" }}>
                             PODGLĄD
+                          </span>}
+                        {mgr.is_active===false&&
+                          <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px",
+                                        borderRadius:10, background:"#FEE2E2", color:"#DC2626" }}>
+                            NIEAKTYWNY
                           </span>}
                       </div>
                       <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
@@ -2548,6 +2555,13 @@ ${"NWŚCPSS"[dow]}`;
                 ))}
               </div>
             </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 0"}}>
+              <input type="checkbox" id="mgr-active-add" checked={fMgrActive}
+                onChange={e=>setFMgrActive(e.target.checked)} />
+              <label htmlFor="mgr-active-add" style={{fontSize:13,color:C.gray6}}>
+                Aktywny (ma dostęp do aplikacji)
+              </label>
+            </div>
             <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
               <input type="checkbox" id="mgr-viewer-add" checked={fMgrViewer}
                 onChange={e=>setFMgrViewer(e.target.checked)} />
@@ -2591,6 +2605,13 @@ ${"NWŚCPSS"[dow]}`;
                   </label>
                 ))}
               </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 0"}}>
+              <input type="checkbox" id="mgr-active-edit" checked={fMgrActive}
+                onChange={e=>setFMgrActive(e.target.checked)} />
+              <label htmlFor="mgr-active-edit" style={{fontSize:13,color:C.gray6}}>
+                Aktywny (ma dostęp do aplikacji)
+              </label>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
               <input type="checkbox" id="mgr-viewer-edit" checked={fMgrViewer}
