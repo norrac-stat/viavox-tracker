@@ -130,6 +130,7 @@ export default function App() {
   const [rates,      setRates]      = useState({});
   const [pieceRates, setPieceRates] = useState({});
   const [importData,      setImportData]      = useState(null);
+  const [prevMonthEmps,   setPrevMonthEmps]   = useState({}); // projId -> Set of empIds
   const [importProj,      setImportProj]      = useState("");
   const [importHoursRows, setImportHoursRows] = useState([]);
   const [importingHours,  setImportingHours]  = useState(false);
@@ -301,6 +302,32 @@ export default function App() {
     loadHours();
   }, [currentManager, year, month, projects, mgrProjects]);
 
+  // ── Load prev month employees for project (fallback when no current data) ──
+  useEffect(() => {
+    if (!activeProj || !currentManager) return;
+    // Only load if current month has no data for this project
+    const hasCurrentData = Object.keys(hoursMap).some(k => k.startsWith(activeProj + "|"));
+    if (hasCurrentData) return;
+
+    async function loadPrevMonthEmps() {
+      const prevMonth = month === 0 ? 11 : month - 1;
+      const prevYear  = month === 0 ? year - 1 : year;
+      const from = `${prevYear}-${String(prevMonth+1).padStart(2,"0")}-01`;
+      const lastDay = new Date(prevYear, prevMonth+1, 0).getDate();
+      const to   = `${prevYear}-${String(prevMonth+1).padStart(2,"0")}-${String(lastDay).padStart(2,"0")}`;
+      const { data } = await supabase.from("hours")
+        .select("employee_id")
+        .eq("project_id", activeProj)
+        .gte("work_date", from)
+        .lte("work_date", to);
+      if (data && data.length > 0) {
+        const ids = new Set(data.map(r => r.employee_id));
+        setPrevMonthEmps(prev => ({ ...prev, [activeProj]: ids }));
+      }
+    }
+    loadPrevMonthEmps();
+  }, [activeProj, year, month, currentManager, hoursMap]);
+
   // ── Load hours for specific project when selected ─────────────────────────
   useEffect(() => {
     if (!activeProj || !currentManager) return;
@@ -352,10 +379,16 @@ export default function App() {
         .filter(k => k.startsWith(activeProj + "|"))
         .map(k => k.split("|")[1])
     );
-    // Jeśli brak godzin dla projektu — pokaż pustą listę (nie wszystkich)
-    if (empIdsWithHours.size === 0) return [];
-    return employees.filter(e => empIdsWithHours.has(e.id));
-  }, [employees, activeProj, hoursMap]);
+    if (empIdsWithHours.size > 0) {
+      return employees.filter(e => empIdsWithHours.has(e.id));
+    }
+    // Brak godzin w bieżącym miesiącu — pokaż pracowników z poprzedniego miesiąca
+    const prevIds = prevMonthEmps[activeProj];
+    if (prevIds && prevIds.size > 0) {
+      return employees.filter(e => prevIds.has(e.id));
+    }
+    return [];
+  }, [employees, activeProj, hoursMap, prevMonthEmps]);
 
   // filteredEmps — używane w timesheecie (searchQ + projekt)
   const filteredEmps = useMemo(() => {
@@ -1038,8 +1071,8 @@ ${"NWŚCPSS"[dow]}`;
     showToast(`Pobrano: ${fname} (${wb.SheetNames.length} arkuszy)`);
   }
 
-  function prevMonth() { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); }
-  function nextMonth() { if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); }
+  function prevMonth() { setPrevMonthEmps({}); if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); }
+  function nextMonth() { setPrevMonthEmps({}); if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); }
 
   // ── Loading screen ────────────────────────────────────────────────────────
   if (loading) return (
