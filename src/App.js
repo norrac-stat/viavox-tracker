@@ -152,6 +152,7 @@ export default function App() {
   const [activeProj, setActiveProj] = useState(null);
   const [searchQ,    setSearchQ]    = useState("");
   const [empProjFilter, setEmpProjFilter] = useState("all"); // "all" or project id
+  const [showInactiveEmps, setShowInactiveEmps] = useState(false);
   const [tab,        setTab]        = useState("timesheet");
   const [modal,      setModal]      = useState(null);
 
@@ -375,19 +376,20 @@ export default function App() {
 
   // ── TIMESHEET: pracownicy filtrowane po aktywnym projekcie ─────────────────
   const empsOnProject = useMemo(() => {
-    if (!activeProj) return employees;
+    const activeEmps = employees.filter(e => e.is_active !== false);
+    if (!activeProj) return activeEmps;
     const empIdsWithHours = new Set(
       Object.keys(hoursMap)
         .filter(k => k.startsWith(activeProj + "|"))
         .map(k => k.split("|")[1])
     );
     if (empIdsWithHours.size > 0) {
-      return employees.filter(e => empIdsWithHours.has(e.id));
+      return activeEmps.filter(e => empIdsWithHours.has(e.id));
     }
     // Brak godzin w bieżącym miesiącu — pokaż pracowników z poprzedniego miesiąca
     const prevIds = prevMonthEmps[activeProj];
     if (prevIds && prevIds.size > 0) {
-      return employees.filter(e => prevIds.has(e.id));
+      return activeEmps.filter(e => prevIds.has(e.id));
     }
     return [];
   }, [employees, activeProj, hoursMap, prevMonthEmps]);
@@ -406,7 +408,7 @@ export default function App() {
 
   const filteredEmpsTab = useMemo(() => {
     const q = empSearch.toLowerCase().trim();
-    let base = employees;
+    let base = showInactiveEmps ? employees : employees.filter(e => e.is_active !== false);
     if (empProjFilter !== "all") {
       const empIdsWithHours = new Set(
         Object.keys(hoursMap)
@@ -414,13 +416,13 @@ export default function App() {
           .map(k => k.split("|")[1])
       );
       base = empIdsWithHours.size > 0
-        ? employees.filter(e => empIdsWithHours.has(e.id))
-        : employees;
+        ? base.filter(e => empIdsWithHours.has(e.id))
+        : base;
     }
-    return q ? employees.filter(e =>
+    return q ? base.filter(e =>
       `${e.first_name} ${e.last_name}`.toLowerCase().includes(q)
     ) : base;
-  }, [employees, empProjFilter, hoursMap, empSearch]);
+  }, [employees, empProjFilter, hoursMap, empSearch, showInactiveEmps]);
 
   const days = daysInMonth(year, month);
   const isAdmin  = currentManager?.is_admin;
@@ -521,6 +523,13 @@ export default function App() {
                    workDate:dateStr, oldValue:oldVal, newValue:val });
       }
     }, 600);
+  }
+
+  async function toggleEmployeeActive(empId, currentActive) {
+    const newActive = currentActive === false ? true : false;
+    await supabase.from("employees").update({ is_active: newActive }).eq("id", empId);
+    setEmployees(prev => prev.map(e => e.id === empId ? { ...e, is_active: newActive } : e));
+    showToast(newActive ? "Pracownik aktywowany" : "Pracownik dezaktywowany");
   }
 
   async function deleteEmployee(empId) {
@@ -1491,6 +1500,14 @@ ${"NWŚCPSS"[dow]}`;
                 onChange={e=>setEmpSearch(e.target.value)} style={{ width:190, padding:"6px 10px", fontSize:12 }} />
             </div>
             <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>
+            {isAdmin && (
+              <button className="btn-ghost btn-sm"
+                onClick={()=>setShowInactiveEmps(v=>!v)}
+                style={{ color: showInactiveEmps ? "#DC2626" : C.gray5,
+                         border: `1px solid ${showInactiveEmps ? "#DC2626" : C.gray3}` }}>
+                {showInactiveEmps ? "● Ukryj nieaktywnych" : "○ Pokaż nieaktywnych"}
+              </button>
+            )}
           </div>
 
           {/* table */}
@@ -1513,7 +1530,8 @@ ${"NWŚCPSS"[dow]}`;
             </thead>
             <tbody>
               {filteredEmpsTab.map((emp,ri)=>{
-                const rowBg = ri%2===0 ? C.white : "#F8FAFC";
+                const isInactive = emp.is_active === false;
+                const rowBg = isInactive ? "#FEF2F2" : ri%2===0 ? C.white : "#F8FAFC";
                 const monthTotals = monthCols.map(({key})=>getMonthHours(emp.id, activeFilter, key));
                 const grandTotal  = Math.round(monthTotals.reduce((s,v)=>s+v,0)*100)/100;
                 const maxH = Math.max(...monthTotals, 1);
@@ -1530,7 +1548,12 @@ ${"NWŚCPSS"[dow]}`;
                           {emp.first_name[0]}{emp.last_name[0]}
                         </div>
                         <div>
-                          <div style={{ fontWeight:500, color:C.gray7 }}>{emp.first_name} {emp.last_name}</div>
+                          <div style={{ fontWeight:500, color: isInactive ? C.gray4 : C.gray7 }}>
+                            {emp.first_name} {emp.last_name}
+                            {isInactive && <span style={{ fontSize:9, fontWeight:700, padding:"1px 5px",
+                              borderRadius:6, background:"#FEE2E2", color:"#DC2626", marginLeft:6 }}>
+                              NIEAKTYWNY</span>}
+                          </div>
                           {emp.uk_number&&<div style={{ fontSize:10, color:C.gray4 }}>{emp.uk_number}</div>}
                         </div>
                       </div>
@@ -1561,10 +1584,17 @@ ${"NWŚCPSS"[dow]}`;
                     })}
                     {/* delete button - admin only */}
                     {isAdmin && (
-                      <td style={{ padding:"4px 8px", textAlign:"center" }}>
+                      <td style={{ padding:"4px 6px", textAlign:"center", whiteSpace:"nowrap" }}>
+                        <button onClick={()=>toggleEmployeeActive(emp.id, emp.is_active)}
+                          style={{ background:"none", border:"none", cursor:"pointer",
+                                   color: emp.is_active===false ? "#DC2626" : "#3DAA70",
+                                   fontSize:13, padding:"2px 5px", borderRadius:4 }}
+                          title={emp.is_active===false ? "Aktywuj pracownika" : "Dezaktywuj pracownika"}>
+                          {emp.is_active===false ? "●" : "●"}
+                        </button>
                         <button onClick={()=>deleteEmployee(emp.id)}
                           style={{ background:"none", border:"none", cursor:"pointer",
-                                   color:C.gray3, fontSize:14, padding:"2px 6px",
+                                   color:C.gray3, fontSize:14, padding:"2px 5px",
                                    borderRadius:4 }}
                           title="Usuń pracownika">✕</button>
                       </td>
