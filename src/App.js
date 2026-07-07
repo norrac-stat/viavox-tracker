@@ -165,7 +165,8 @@ export default function App() {
   const [fMgrPin,   setFMgrPin]   = useState("");
   const [fMgrProjs, setFMgrProjs] = useState([]);
   const [fMgrViewer, setFMgrViewer] = useState(false);
-  const [fMgrActive, setFMgrActive] = useState(true);
+  const [fMgrActive,       setFMgrActive]       = useState(true);
+  const [fMgrCoordinator, setFMgrCoordinator] = useState(false);
   const [auditLog,       setAuditLog]       = useState([]);
   const [auditLoading,   setAuditLoading]   = useState(false);
   const [auditEmpFilter, setAuditEmpFilter] = useState("");
@@ -190,14 +191,14 @@ export default function App() {
       setLoading(true);
       // Load critical data first (managers + projects) — show UI faster
       const [{ data: mgrs, error: mgrsErr }, { data: projs }, { data: mp }] = await Promise.all([
-        supabase.from("managers").select("id,name,pin,is_admin,is_viewer,is_active").order("name"),
+        supabase.from("managers").select("id,name,pin,is_admin,is_viewer,is_active,is_coordinator").order("name"),
         supabase.from("projects").select("id,name,number").order("name"),
         supabase.from("manager_projects").select("manager_id,project_id"),
       ]);
       if (mgrsErr) {
         // Fallback: is_viewer column may not exist yet — retry without it
         const { data: mgrsFallback } = await supabase
-          .from("managers").select("id,name,pin,is_admin,is_active").order("name");
+          .from("managers").select("id,name,pin,is_admin,is_active,is_coordinator").order("name");
         setManagers((mgrsFallback || []).map(m => ({ ...m, is_viewer: false })));
       } else {
         setManagers(mgrs || []);
@@ -423,13 +424,17 @@ export default function App() {
 
   const days = daysInMonth(year, month);
   const isAdmin  = currentManager?.is_admin;
-  const isViewer = currentManager?.is_viewer && !isAdmin;
+  const isViewer      = currentManager?.is_viewer && !isAdmin;
+  const isCoordinator = currentManager?.is_coordinator && !isAdmin && !isViewer;
 
   useEffect(() => {
     if (isViewer && tab !== "przeglad" && tab !== "report") {
       setTab("przeglad");
     }
-  }, [isViewer, tab]);
+    if (isCoordinator && !["timesheet","employees","akord","projects"].includes(tab)) {
+      setTab("timesheet");
+    }
+  }, [isViewer, isCoordinator, tab]);
 
   // ── Historia zmian (Admin only) — ładuje się gdy zakładka jest aktywna ────
   useEffect(() => {
@@ -645,7 +650,7 @@ export default function App() {
   async function addManager() {
     if (!fMgrName.trim() || fMgrPin.length !== 4) return;
     const { data, error } = await supabase.from("managers").insert({
-      name: fMgrName.trim(), pin: fMgrPin, is_admin: false, is_viewer: fMgrViewer, is_active: fMgrActive,
+      name: fMgrName.trim(), pin: fMgrPin, is_admin: false, is_viewer: fMgrViewer, is_active: fMgrActive, is_coordinator: fMgrCoordinator,
     }).select().single();
     if (error) { showToast("Błąd zapisu", "err"); return; }
     if (fMgrProjs.length > 0) {
@@ -655,12 +660,12 @@ export default function App() {
       setMgrProjects(prev => [...prev, ...fMgrProjs.map(pid => ({ manager_id: data.id, project_id: pid }))]);
     }
     setManagers(prev => [...prev, data].sort((a,b) => a.name.localeCompare(b.name)));
-    setFMgrName(""); setFMgrPin(""); setFMgrProjs([]); setFMgrViewer(false); setFMgrActive(true);
+    setFMgrName(""); setFMgrPin(""); setFMgrProjs([]); setFMgrViewer(false); setFMgrActive(true); setFMgrCoordinator(false);
     setModal(null); showToast("Kierownik dodany");
   }
 
   async function saveEditMgr() {
-    const updates = { name: fMgrName, is_viewer: fMgrViewer, is_active: fMgrActive };
+    const updates = { name: fMgrName, is_viewer: fMgrViewer, is_active: fMgrActive, is_coordinator: fMgrCoordinator };
     if (fMgrPin.length === 4) updates.pin = fMgrPin;
     const { error } = await supabase.from("managers").update(updates).eq("id", editingMgr.id);
     if (error) { showToast("Błąd zapisu", "err"); return; }
@@ -691,6 +696,7 @@ export default function App() {
     setFMgrProjs(mgrProjects.filter(mp => mp.manager_id === mgr.id).map(mp => mp.project_id));
     setFMgrViewer(!!mgr.is_viewer);
     setFMgrActive(mgr.is_active !== false);
+    setFMgrCoordinator(!!mgr.is_coordinator);
     setModal("editMgr");
   }
 
@@ -1162,6 +1168,11 @@ ${"NWŚCPSS"[dow]}`;
           {(isViewer ? [
             ["przeglad","Przegląd"],
             ["report","Raport"],
+          ] : isCoordinator ? [
+            ["timesheet","Timesheet"],
+            ["employees","Pracownicy"],
+            ["akord","Akord"],
+            ["projects","Projekty"],
           ] : [
             ["timesheet","Timesheet"],
             ["employees","Pracownicy"],
@@ -1180,7 +1191,7 @@ ${"NWŚCPSS"[dow]}`;
             <div style={{ textAlign:"right" }}>
               <div style={{ fontSize:13, fontWeight:600, color:C.gray6 }}>{currentManager.name}</div>
               <div style={{ fontSize:11, color:C.gray4 }}>
-                {isAdmin?"Administrator":isViewer?`Podgląd · ${myProjects.length} projekt${myProjects.length===1?"":"ów"}`:`${myProjects.length} projekt${myProjects.length===1?"":"ów"}`}
+                {isAdmin?"Administrator":isViewer?`Podgląd · ${myProjects.length} proj.`:isCoordinator?`Koordynator · ${myProjects.length} proj.`:`${myProjects.length} projekt${myProjects.length===1?"":"ów"}`}
               </div>
             </div>
           )}
@@ -1213,6 +1224,11 @@ ${"NWŚCPSS"[dow]}`;
               {(isViewer ? [
                 ["przeglad","🗓️ Przegląd"],
                 ["report","📊 Raport"],
+              ] : isCoordinator ? [
+                ["timesheet","📋 Timesheet"],
+                ["employees","👥 Pracownicy"],
+                ["akord","📦 Akord"],
+                ["projects","📁 Projekty"],
               ] : [
                 ["timesheet","📋 Timesheet"],
                 ["akord","📦 Akord"],
@@ -1960,7 +1976,7 @@ ${"NWŚCPSS"[dow]}`;
           <div style={{ display:"flex", alignItems:"center", marginBottom:20 }}>
             <div style={{ fontWeight:700, fontSize:20, color:C.gray7 }}>Użytkownicy</div>
             <button className="btn btn-sm" style={{ marginLeft:"auto" }}
-              onClick={()=>{setFMgrName("");setFMgrPin("");setFMgrProjs([]);setFMgrViewer(false);setFMgrActive(true);setModal("addMgr");}}>
+              onClick={()=>{setFMgrName("");setFMgrPin("");setFMgrProjs([]);setFMgrViewer(false);setFMgrActive(true);setFMgrCoordinator(false);setModal("addMgr");}}>
               + Dodaj kierownika
             </button>
           </div>
@@ -1986,6 +2002,11 @@ ${"NWŚCPSS"[dow]}`;
                           <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px",
                                         borderRadius:10, background:"#EDE9FE", color:"#6D28D9" }}>
                             PODGLĄD
+                          </span>}
+                        {mgr.is_coordinator&&!mgr.is_admin&&
+                          <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px",
+                                        borderRadius:10, background:"#DCFCE7", color:"#166534" }}>
+                            KOORDYNATOR
                           </span>}
                         {mgr.is_active===false&&
                           <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px",
@@ -2569,6 +2590,13 @@ ${"NWŚCPSS"[dow]}`;
                 Rola "Podgląd" — widzi tylko zakładki Przegląd i Raport (bez edycji godzin)
               </label>
             </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 0"}}>
+              <input type="checkbox" id="mgr-coord-add" checked={fMgrCoordinator}
+                onChange={e=>{setFMgrCoordinator(e.target.checked);if(e.target.checked)setFMgrViewer(false);}} />
+              <label htmlFor="mgr-coord-add" style={{fontSize:13,color:C.gray6}}>
+                Rola "Koordynator" — widzi Timesheet, Pracownicy, Akord, Projekty
+              </label>
+            </div>
             <div style={{display:"flex",gap:10}}>
               <button className="btn" onClick={addManager}
                 disabled={!fMgrName.trim()||fMgrPin.length!==4}>Dodaj</button>
@@ -2618,6 +2646,13 @@ ${"NWŚCPSS"[dow]}`;
                 onChange={e=>setFMgrViewer(e.target.checked)} />
               <label htmlFor="mgr-viewer-edit" style={{fontSize:13,color:C.gray6}}>
                 Rola "Podgląd" — widzi tylko zakładki Przegląd i Raport (bez edycji godzin)
+              </label>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 0"}}>
+              <input type="checkbox" id="mgr-coord-edit" checked={fMgrCoordinator}
+                onChange={e=>{setFMgrCoordinator(e.target.checked);if(e.target.checked)setFMgrViewer(false);}} />
+              <label htmlFor="mgr-coord-edit" style={{fontSize:13,color:C.gray6}}>
+                Rola "Koordynator" — widzi Timesheet, Pracownicy, Akord, Projekty
               </label>
             </div>
             <div style={{display:"flex",gap:10}}>
