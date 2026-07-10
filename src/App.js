@@ -130,7 +130,9 @@ export default function App() {
   const [rates,      setRates]      = useState({});
   const [pieceRates, setPieceRates] = useState({});
   const [importData,      setImportData]      = useState(null);
-  const [prevMonthEmps,   setPrevMonthEmps]   = useState({}); // projId -> Set of empIds
+  const [prevMonthEmps,   setPrevMonthEmps]   = useState({});
+  const [multiMonthMap,   setMultiMonthMap]   = useState({});
+  const [exportEmpMonth,  setExportEmpMonth]  = useState(null); // {y,m} for employee report // for employees tab cross-month view // projId -> Set of empIds
   const [importProj,      setImportProj]      = useState("");
   const [importHoursRows, setImportHoursRows] = useState([]);
   const [importingHours,  setImportingHours]  = useState(false);
@@ -437,6 +439,50 @@ export default function App() {
       setTab("timesheet");
     }
   }, [isViewer, isCoordinator, tab]);
+
+  // ── Multi-month hours for Employees tab ──────────────────────────────────
+  useEffect(() => {
+    if (tab !== "employees" || !currentManager) return;
+    // Build list of months to load (current year from Jan to current month, plus prev year Dec if needed)
+    const monthsToLoad = [];
+    // Show Cze-Gru of current year (indices 5-11) — load all of them
+    for (let m = 0; m <= 11; m++) {
+      const mk = `${year}-${String(m+1).padStart(2,"0")}`;
+      monthsToLoad.push({ y: year, m, mk });
+    }
+
+    async function loadMultiMonth() {
+      const combined = { ...hoursMap };
+      for (const { y, m, mk } of monthsToLoad) {
+        // Skip current month — already in hoursMap
+        if (y === year && m === month) continue;
+        const from = `${y}-${String(m+1).padStart(2,"0")}-01`;
+        const lastDay = new Date(y, m+1, 0).getDate();
+        const to = `${y}-${String(m+1).padStart(2,"0")}-${String(lastDay).padStart(2,"0")}`;
+        const PAGE = 2000; let idx = 0;
+        while (true) {
+          let q = supabase.from("hours")
+            .select("project_id,employee_id,work_date,hours")
+            .gte("work_date", from).lte("work_date", to)
+            .range(idx, idx + PAGE - 1);
+          if (!currentManager.is_admin) {
+            const myProjIds = mgrProjects.filter(mp => mp.manager_id === currentManager.id).map(mp => mp.project_id);
+            if (myProjIds.length > 0) q = q.in("project_id", myProjIds);
+          }
+          const { data, error } = await q;
+          if (error || !data || data.length === 0) break;
+          for (const row of data) {
+            const dateKey = String(row.work_date).substring(0, 10);
+            combined[`${row.project_id}|${row.employee_id}|${dateKey}`] = String(row.hours);
+          }
+          if (data.length < PAGE) break;
+          idx += PAGE;
+        }
+      }
+      setMultiMonthMap(combined);
+    }
+    loadMultiMonth();
+  }, [tab, year, currentManager]);
 
   // ── Historia zmian (Admin only) — ładuje się gdy zakładka jest aktywna ────
   useEffect(() => {
@@ -899,9 +945,10 @@ export default function App() {
     showToast(`Import: ${ok} wpisów OK${err>0?" | "+err+" błędów":""}`);
   }
 
-  function exportEmployeeReport() {
-    const monthName = MONTHS[month];
-    const numDays   = daysInMonth(year, month);
+  function exportEmployeeReport(expYear, expMonth) {
+    const monthName = MONTHS[expMonth];
+    const numDays   = daysInMonth(expYear, expMonth);
+    const sourceMap = Object.keys(multiMonthMap).length > 0 ? multiMonthMap : hoursMap;
 
     // Header: Nazwisko, Imię, Nr UK, Typ, Projekt, + dzień 1..N, Suma
     const dayHeaders = Array.from({length: numDays}, (_, i) => {
@@ -920,8 +967,8 @@ export default function App() {
         // Check if this employee has any hours in this project this month
         let suma = 0;
         const dayHours = Array.from({length: numDays}, (_, i) => {
-          const key = `${proj.id}|${emp.id}|${toDateStr(year, month, i+1)}`;
-          const h = parseFloat(hoursMap[key]) || 0;
+          const key = `${proj.id}|${emp.id}|${toDateStr(expYear, expMonth, i+1)}`;
+          const h = parseFloat(mapToUse[key]) || 0;
           suma += h;
           return h > 0 ? h : "";
         });
@@ -1509,15 +1556,18 @@ ${"NWŚCPSS"[dow]}`;
       {/* ═══ EMPLOYEES ═══ */}
       {tab==="employees" && (()=>{
         // fixed months: June–December of current year
-        const monthCols = [5,6,7,8,9,10,11].map(m => ({
+        // Dynamic month columns: all months of current year, highlight current
+        const monthCols = Array.from({length:12}, (_,m) => ({
           y: year, m,
           key: `${year}-${String(m+1).padStart(2,"0")}`
         }));
         const PL_MONTHS_SHORT = ["Sty","Lut","Mar","Kwi","Maj","Cze","Lip","Sie","Wrz","Paź","Lis","Gru"];
 
         // Pre-build cache: empMonthProj[empId][mk][projId] = hours
+        // Uses multiMonthMap (all months) when available, falls back to hoursMap
+        const sourceMap = Object.keys(multiMonthMap).length > 0 ? multiMonthMap : hoursMap;
         const empMonthCache = {};
-        for (const [k, v] of Object.entries(hoursMap)) {
+        for (const [k, v] of Object.entries(sourceMap)) {
           const [kProj, kEmp, kDate] = k.split("|");
           if (!kEmp || !kDate) continue;
           const mk = kDate.substring(0, 7);
@@ -1558,7 +1608,7 @@ ${"NWŚCPSS"[dow]}`;
                 onChange={e=>setEmpSearch(e.target.value)} style={{ width:190, padding:"6px 10px", fontSize:12 }} />
             </div>
             <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>
-            <button className="btn-ghost btn-sm" onClick={exportEmployeeReport}>⬇ Raport CSV</button>
+            <button className="btn-ghost btn-sm" onClick={()=>setExportEmpMonth({y:year,m:month})}>⬇ Raport CSV</button>
             {isAdmin && (
               <button className="btn-ghost btn-sm"
                 onClick={()=>setShowInactiveEmps(v=>!v)}
@@ -2748,6 +2798,34 @@ ${"NWŚCPSS"[dow]}`;
               <button className="btn" onClick={saveEditMgr}
                 disabled={!fMgrName.trim()}>Zapisz</button>
               <button className="btn-ghost" onClick={()=>setModal(null)}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {exportEmpMonth && (
+        <div className="modal-bg" onClick={()=>setExportEmpMonth(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:380}}>
+            <div style={{fontWeight:700,fontSize:18,color:C.gray7}}>⬇ Raport CSV — wybierz miesiąc</div>
+            <div style={{fontSize:13,color:C.gray5}}>
+              Imię, Nazwisko, Nr UK, Typ, Projekt, godziny day-by-day
+            </div>
+            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              <select className="inp" value={exportEmpMonth.y}
+                onChange={e=>setExportEmpMonth(v=>({...v,y:parseInt(e.target.value)}))}>
+                {[2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+              </select>
+              <select className="inp" value={exportEmpMonth.m}
+                onChange={e=>setExportEmpMonth(v=>({...v,m:parseInt(e.target.value)}))}>
+                {MONTHS.map((name,i)=><option key={i} value={i}>{name}</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn" onClick={()=>{
+                exportEmployeeReport(exportEmpMonth.y, exportEmpMonth.m);
+                setExportEmpMonth(null);
+              }}>Pobierz CSV</button>
+              <button className="btn-ghost" onClick={()=>setExportEmpMonth(null)}>Anuluj</button>
             </div>
           </div>
         </div>
