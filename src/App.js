@@ -948,12 +948,12 @@ export default function App() {
   function exportEmployeeReport(expYear, expMonth) {
     const monthName = MONTHS[expMonth];
     const numDays   = daysInMonth(expYear, expMonth);
-    const sourceMap = Object.keys(multiMonthMap).length > 0 ? multiMonthMap : hoursMap;
+    const mapToUse  = Object.keys(multiMonthMap).length > 0 ? multiMonthMap : hoursMap;
 
     // Header: Nazwisko, Imię, Nr UK, Typ, Projekt, + dzień 1..N, Suma
     const dayHeaders = Array.from({length: numDays}, (_, i) => {
       const d = i+1;
-      const dow = new Date(year, month, d).getDay();
+      const dow = new Date(expYear, expMonth, d).getDay();
       return `${d} ${"N W Ś C P S N".split(" ")[dow]}`;
     });
     const header = ["Nazwisko","Imię","Nr UK","Typ","Projekt","Nr proj.", ...dayHeaders, "SUMA"];
@@ -964,7 +964,6 @@ export default function App() {
 
     empsToExport.forEach(emp => {
       myProjects.forEach(proj => {
-        // Check if this employee has any hours in this project this month
         let suma = 0;
         const dayHours = Array.from({length: numDays}, (_, i) => {
           const key = `${proj.id}|${emp.id}|${toDateStr(expYear, expMonth, i+1)}`;
@@ -972,7 +971,7 @@ export default function App() {
           suma += h;
           return h > 0 ? h : "";
         });
-        if (suma === 0) return; // skip if no hours
+        if (suma === 0) return;
 
         rows.push([
           emp.last_name,
@@ -998,10 +997,10 @@ export default function App() {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href = url;
-    a.download = `VIAVOX_Pracownicy_${monthName}_${year}.csv`;
+    a.download = `VIAVOX_Pracownicy_${monthName}_${expYear}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast(`Pobrano: VIAVOX_Pracownicy_${monthName}_${year}.csv (${rows.length-1} wierszy)`);
+    showToast(`Pobrano: VIAVOX_Pracownicy_${monthName}_${expYear}.csv (${rows.length-1} wierszy)`);
   }
 
   function exportReportCSV(projRows, totalRevenue, forecastRev, monthName) {
