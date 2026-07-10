@@ -132,7 +132,7 @@ export default function App() {
   const [importData,      setImportData]      = useState(null);
   const [prevMonthEmps,   setPrevMonthEmps]   = useState({});
   const [multiMonthMap,   setMultiMonthMap]   = useState({});
-  const [exportEmpMonth,  setExportEmpMonth]  = useState(null); // {y,m} for employee report // for employees tab cross-month view // projId -> Set of empIds
+  const [exportEmpRange,  setExportEmpRange]  = useState(null); // {from, to} date strings // for employees tab cross-month view // projId -> Set of empIds
   const [importProj,      setImportProj]      = useState("");
   const [importHoursRows, setImportHoursRows] = useState([]);
   const [importingHours,  setImportingHours]  = useState(false);
@@ -945,31 +945,39 @@ export default function App() {
     showToast(`Import: ${ok} wpisów OK${err>0?" | "+err+" błędów":""}`);
   }
 
-  function exportEmployeeReport(expYear, expMonth) {
-    const monthName = MONTHS[expMonth];
-    const numDays   = daysInMonth(expYear, expMonth);
-    const mapToUse  = { ...multiMonthMap, ...hoursMap };
+  function exportEmployeeReport(fromDate, toDate) {
+    if (!fromDate || !toDate || fromDate > toDate) {
+      showToast("Nieprawidłowy zakres dat", "err"); return;
+    }
+    const mapToUse = { ...multiMonthMap, ...hoursMap };
 
-    // Header: Nazwisko, Imię, Nr UK, Typ, Projekt, + dzień 1..N, Suma
-    const dayHeaders = Array.from({length: numDays}, (_, i) => {
-      const d = i+1;
-      const dow = new Date(expYear, expMonth, d).getDay();
-      return `${d} ${"N W Ś C P S N".split(" ")[dow]}`;
+    // Build list of days in range
+    const days = [];
+    const cur = new Date(fromDate);
+    const end = new Date(toDate);
+    while (cur <= end) {
+      days.push(cur.toISOString().substring(0, 10));
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    const dayHeaders = days.map(d => {
+      const dt = new Date(d);
+      const dow = dt.getDay();
+      return `${dt.getDate()}.${String(dt.getMonth()+1).padStart(2,"0")} ${"N W Ś C P S N".split(" ")[dow]}`;
     });
+
     const header = ["Nazwisko","Imię","Nr UK","Typ","Projekt","Nr proj.", ...dayHeaders, "SUMA"];
     const rows   = [header];
 
-    // For each employee × project combination that has hours this month
     const empsToExport = employees.filter(e => e.is_active !== false);
 
     empsToExport.forEach(emp => {
       myProjects.forEach(proj => {
         let suma = 0;
-        const dayHours = Array.from({length: numDays}, (_, i) => {
-          const key = `${proj.id}|${emp.id}|${toDateStr(expYear, expMonth, i+1)}`;
+        const dayHours = days.map(d => {
+          const key = `${proj.id}|${emp.id}|${d}`;
           const h = parseFloat(mapToUse[key]) || 0;
           suma += h;
-          // Force text format to prevent Excel from converting numbers to dates
           return h > 0 ? String(h).replace(".", ",") : "";
         });
         if (suma === 0) return;
@@ -987,7 +995,7 @@ export default function App() {
       });
     });
 
-    if (rows.length <= 1) { showToast("Brak danych do eksportu", "err"); return; }
+    if (rows.length <= 1) { showToast("Brak danych w wybranym zakresie", "err"); return; }
 
     const csv = rows.map(r => r.map(v => {
       const s = String(v);
@@ -998,10 +1006,10 @@ export default function App() {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href = url;
-    a.download = `VIAVOX_Pracownicy_${monthName}_${expYear}.csv`;
+    a.download = `VIAVOX_Pracownicy_${fromDate}_${toDate}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast(`Pobrano: VIAVOX_Pracownicy_${monthName}_${expYear}.csv (${rows.length-1} wierszy)`);
+    showToast(`Pobrano: ${rows.length-1} wierszy, ${days.length} dni`);
   }
 
   function exportReportCSV(projRows, totalRevenue, forecastRev, monthName) {
@@ -1608,7 +1616,7 @@ ${"NWŚCPSS"[dow]}`;
                 onChange={e=>setEmpSearch(e.target.value)} style={{ width:190, padding:"6px 10px", fontSize:12 }} />
             </div>
             <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>
-            <button className="btn-ghost btn-sm" onClick={()=>setExportEmpMonth({y:year,m:month})}>⬇ Raport CSV</button>
+            <button className="btn-ghost btn-sm" onClick={()=>{ const today=`${year}-${String(month+1).padStart(2,'0')}-01`; setExportEmpRange({from:today, to:`${year}-${String(month+1).padStart(2,'0')}-${String(daysInMonth(year,month)).padStart(2,'0')}`}); }}>⬇ Raport CSV</button>
             {isAdmin && (
               <button className="btn-ghost btn-sm"
                 onClick={()=>setShowInactiveEmps(v=>!v)}
@@ -2803,29 +2811,31 @@ ${"NWŚCPSS"[dow]}`;
         </div>
       )}
 
-      {exportEmpMonth && (
-        <div className="modal-bg" onClick={()=>setExportEmpMonth(null)}>
-          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:380}}>
-            <div style={{fontWeight:700,fontSize:18,color:C.gray7}}>⬇ Raport CSV — wybierz miesiąc</div>
+      {exportEmpRange && (
+        <div className="modal-bg" onClick={()=>setExportEmpRange(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420}}>
+            <div style={{fontWeight:700,fontSize:18,color:C.gray7}}>⬇ Raport CSV pracowników</div>
             <div style={{fontSize:13,color:C.gray5}}>
-              Imię, Nazwisko, Nr UK, Typ, Projekt, godziny day-by-day
+              Nazwisko, Imię, Nr UK, Typ, Projekt + godziny per dzień
             </div>
-            <div style={{display:"flex",gap:10,alignItems:"center"}}>
-              <select className="inp" value={exportEmpMonth.y}
-                onChange={e=>setExportEmpMonth(v=>({...v,y:parseInt(e.target.value)}))}>
-                {[2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
-              </select>
-              <select className="inp" value={exportEmpMonth.m}
-                onChange={e=>setExportEmpMonth(v=>({...v,m:parseInt(e.target.value)}))}>
-                {MONTHS.map((name,i)=><option key={i} value={i}>{name}</option>)}
-              </select>
+            <div style={{display:"flex",gap:12,alignItems:"center"}}>
+              <div style={{flex:1}}>
+                <label className="lbl">Od</label>
+                <input className="inp" type="date" value={exportEmpRange.from}
+                  onChange={e=>setExportEmpRange(v=>({...v,from:e.target.value}))} />
+              </div>
+              <div style={{flex:1}}>
+                <label className="lbl">Do</label>
+                <input className="inp" type="date" value={exportEmpRange.to}
+                  onChange={e=>setExportEmpRange(v=>({...v,to:e.target.value}))} />
+              </div>
             </div>
             <div style={{display:"flex",gap:10}}>
               <button className="btn" onClick={()=>{
-                exportEmployeeReport(exportEmpMonth.y, exportEmpMonth.m);
-                setExportEmpMonth(null);
+                exportEmployeeReport(exportEmpRange.from, exportEmpRange.to);
+                setExportEmpRange(null);
               }}>Pobierz CSV</button>
-              <button className="btn-ghost" onClick={()=>setExportEmpMonth(null)}>Anuluj</button>
+              <button className="btn-ghost" onClick={()=>setExportEmpRange(null)}>Anuluj</button>
             </div>
           </div>
         </div>
