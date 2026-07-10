@@ -969,7 +969,8 @@ export default function App() {
           const key = `${proj.id}|${emp.id}|${toDateStr(expYear, expMonth, i+1)}`;
           const h = parseFloat(mapToUse[key]) || 0;
           suma += h;
-          return h > 0 ? h : "";
+          // Force text format to prevent Excel from converting numbers to dates
+          return h > 0 ? String(h).replace(".", ",") : "";
         });
         if (suma === 0) return;
 
@@ -981,7 +982,7 @@ export default function App() {
           proj.name,
           proj.number || "",
           ...dayHours,
-          Math.round(suma * 100) / 100
+          String(Math.round(suma * 100) / 100).replace(".", ",")
         ]);
       });
     });
