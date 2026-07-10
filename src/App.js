@@ -899,6 +899,64 @@ export default function App() {
     showToast(`Import: ${ok} wpisów OK${err>0?" | "+err+" błędów":""}`);
   }
 
+  function exportEmployeeReport() {
+    const monthName = MONTHS[month];
+    const numDays   = daysInMonth(year, month);
+
+    // Header: Nazwisko, Imię, Nr UK, Typ, Projekt, + dzień 1..N, Suma
+    const dayHeaders = Array.from({length: numDays}, (_, i) => {
+      const d = i+1;
+      const dow = new Date(year, month, d).getDay();
+      return `${d} ${"N W Ś C P S N".split(" ")[dow]}`;
+    });
+    const header = ["Nazwisko","Imię","Nr UK","Typ","Projekt","Nr proj.", ...dayHeaders, "SUMA"];
+    const rows   = [header];
+
+    // For each employee × project combination that has hours this month
+    const empsToExport = employees.filter(e => e.is_active !== false);
+
+    empsToExport.forEach(emp => {
+      myProjects.forEach(proj => {
+        // Check if this employee has any hours in this project this month
+        let suma = 0;
+        const dayHours = Array.from({length: numDays}, (_, i) => {
+          const key = `${proj.id}|${emp.id}|${toDateStr(year, month, i+1)}`;
+          const h = parseFloat(hoursMap[key]) || 0;
+          suma += h;
+          return h > 0 ? h : "";
+        });
+        if (suma === 0) return; // skip if no hours
+
+        rows.push([
+          emp.last_name,
+          emp.first_name,
+          emp.uk_number || "",
+          emp.is_student ? "UZS" : "UZSO",
+          proj.name,
+          proj.number || "",
+          ...dayHours,
+          Math.round(suma * 100) / 100
+        ]);
+      });
+    });
+
+    if (rows.length <= 1) { showToast("Brak danych do eksportu", "err"); return; }
+
+    const csv = rows.map(r => r.map(v => {
+      const s = String(v);
+      return s.includes(";") || s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s;
+    }).join(";")).join("\r\n");
+
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url;
+    a.download = `VIAVOX_Pracownicy_${monthName}_${year}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast(`Pobrano: VIAVOX_Pracownicy_${monthName}_${year}.csv (${rows.length-1} wierszy)`);
+  }
+
   function exportReportCSV(projRows, totalRevenue, forecastRev, monthName) {
     const rows = [[
       "Nr","Projekt","Prac.","UZS",
@@ -1500,6 +1558,7 @@ ${"NWŚCPSS"[dow]}`;
                 onChange={e=>setEmpSearch(e.target.value)} style={{ width:190, padding:"6px 10px", fontSize:12 }} />
             </div>
             <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>
+            <button className="btn-ghost btn-sm" onClick={exportEmployeeReport}>⬇ Raport CSV</button>
             {isAdmin && (
               <button className="btn-ghost btn-sm"
                 onClick={()=>setShowInactiveEmps(v=>!v)}
