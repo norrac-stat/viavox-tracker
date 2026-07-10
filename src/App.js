@@ -948,7 +948,7 @@ export default function App() {
   function exportEmployeeReport(expYear, expMonth) {
     const monthName = MONTHS[expMonth];
     const numDays   = daysInMonth(expYear, expMonth);
-    const mapToUse  = Object.keys(multiMonthMap).length > 0 ? multiMonthMap : hoursMap;
+    const mapToUse  = { ...multiMonthMap, ...hoursMap };
 
     // Header: Nazwisko, Imię, Nr UK, Typ, Projekt, + dzień 1..N, Suma
     const dayHeaders = Array.from({length: numDays}, (_, i) => {
@@ -1564,8 +1564,8 @@ ${"NWŚCPSS"[dow]}`;
         const PL_MONTHS_SHORT = ["Sty","Lut","Mar","Kwi","Maj","Cze","Lip","Sie","Wrz","Paź","Lis","Gru"];
 
         // Pre-build cache: empMonthProj[empId][mk][projId] = hours
-        // Uses multiMonthMap (all months) when available, falls back to hoursMap
-        const sourceMap = Object.keys(multiMonthMap).length > 0 ? multiMonthMap : hoursMap;
+        // Uses multiMonthMap merged with current hoursMap (always includes current month)
+        const sourceMap = { ...multiMonthMap, ...hoursMap };
         const empMonthCache = {};
         for (const [k, v] of Object.entries(sourceMap)) {
           const [kProj, kEmp, kDate] = k.split("|");
