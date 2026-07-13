@@ -1699,23 +1699,22 @@ ${"NWŚCPSS"[dow]}`;
                         </td>
                       );
                     })}
-                    {/* delete button - admin only */}
-                    {isAdmin && (
-                      <td style={{ padding:"4px 6px", textAlign:"center", whiteSpace:"nowrap" }}>
-                        <button onClick={()=>toggleEmployeeActive(emp.id, emp.is_active)}
-                          style={{ background:"none", border:"none", cursor:"pointer",
-                                   color: emp.is_active===false ? "#DC2626" : "#3DAA70",
-                                   fontSize:13, padding:"2px 5px", borderRadius:4 }}
-                          title={emp.is_active===false ? "Aktywuj pracownika" : "Dezaktywuj pracownika"}>
-                          {emp.is_active===false ? "●" : "●"}
-                        </button>
-                        <button onClick={()=>deleteEmployee(emp.id)}
-                          style={{ background:"none", border:"none", cursor:"pointer",
-                                   color:C.gray3, fontSize:14, padding:"2px 5px",
-                                   borderRadius:4 }}
-                          title="Usuń pracownika">✕</button>
-                      </td>
-                    )}
+                  <td style={{ padding:"4px 6px", textAlign:"center", whiteSpace:"nowrap" }}>
+  <button onClick={()=>toggleEmployeeActive(emp.id, emp.is_active)}
+    style={{ background:"none", border:"none", cursor:"pointer",
+             color: emp.is_active===false ? "#DC2626" : "#3DAA70",
+             fontSize:13, padding:"2px 5px", borderRadius:4 }}
+    title={emp.is_active===false ? "Aktywuj pracownika" : "Dezaktywuj pracownika"}>
+    {emp.is_active===false ? "●" : "●"}
+  </button>
+  {isAdmin && (
+    <button onClick={()=>deleteEmployee(emp.id)}
+      style={{ background:"none", border:"none", cursor:"pointer",
+               color:C.gray3, fontSize:14, padding:"2px 5px",
+               borderRadius:4 }}
+      title="Usuń pracownika">✕</button>
+  )}
+</td>
                     {/* grand total */}
                     <td style={{ padding:"7px 10px", textAlign:"center",
                                  fontWeight:700, color:grandTotal>0?C.blue:C.gray3,
