@@ -2536,13 +2536,26 @@ ${"NWŚCPSS"[dow]}`;
           {/* UZS vs UZSO */}
           <div style={{ background:C.white, border:`1px solid ${C.gray3}`, borderRadius:10, padding:"14px 18px", marginBottom:14 }}>
             <div style={{ fontSize:12, fontWeight:600, color:C.gray6, marginBottom:10 }}>Podział godzin: UZS vs UZSO</div>
-            <div style={{ display:"flex", height:26, borderRadius:6, overflow:"hidden", gap:2 }}>
-              {stuPct>0&&<div style={{ width:`${stuPct}%`, background:"#3DAA70", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:11, fontWeight:600 }}>{stuPct>8?`${stuPct}% UZS`:""}</div>}
-              <div style={{ flex:1, background:C.blue, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:11, fontWeight:600 }}>{worPct>8?`${worPct}% UZSO`:""}</div>
-            </div>
-            <div style={{ display:"flex", gap:20, marginTop:8, fontSize:11 }}>
-              <span style={{ color:"#3DAA70", fontWeight:500 }}>● UZS: {studentH}h ({stuPct}%)</span>
-              <span style={{ color:C.blue, fontWeight:500 }}>● UZSO: {workerH}h ({worPct}%)</span>
+            <div style={{ display:"flex", alignItems:"center", gap:24, flexWrap:"wrap" }}>
+              <div style={{ position:"relative", width:120, height:120, flexShrink:0 }}>
+                <svg width="120" height="120" viewBox="0 0 120 120" style={{ transform:"rotate(-90deg)" }}>
+                  <circle cx="60" cy="60" r="50" fill="none" stroke={C.blue} strokeWidth="20" />
+                  {stuPct>0 && (
+                    <circle cx="60" cy="60" r="50" fill="none" stroke="#3DAA70" strokeWidth="20"
+                      strokeDasharray={`${(stuPct/100)*2*Math.PI*50} ${2*Math.PI*50}`}
+                      strokeLinecap={stuPct<100?"butt":"round"} />
+                  )}
+                </svg>
+                <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column",
+                              alignItems:"center", justifyContent:"center" }}>
+                  <div style={{ fontSize:17, fontWeight:800, color:C.gray7 }}>{totalAllH}h</div>
+                  <div style={{ fontSize:9, color:C.gray4, textTransform:"uppercase" }}>łącznie</div>
+                </div>
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:8, fontSize:12 }}>
+                <span style={{ color:"#3DAA70", fontWeight:600 }}>● UZS: {studentH}h ({stuPct}%)</span>
+                <span style={{ color:C.blue, fontWeight:600 }}>● UZSO: {workerH}h ({worPct}%)</span>
+              </div>
             </div>
           </div>
 
