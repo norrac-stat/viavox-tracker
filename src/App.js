@@ -1699,22 +1699,23 @@ ${"NWŚCPSS"[dow]}`;
                         </td>
                       );
                     })}
-                  <td style={{ padding:"4px 6px", textAlign:"center", whiteSpace:"nowrap" }}>
-  <button onClick={()=>toggleEmployeeActive(emp.id, emp.is_active)}
-    style={{ background:"none", border:"none", cursor:"pointer",
-             color: emp.is_active===false ? "#DC2626" : "#3DAA70",
-             fontSize:13, padding:"2px 5px", borderRadius:4 }}
-    title={emp.is_active===false ? "Aktywuj pracownika" : "Dezaktywuj pracownika"}>
-    {emp.is_active===false ? "●" : "●"}
-  </button>
-  {isAdmin && (
-    <button onClick={()=>deleteEmployee(emp.id)}
-      style={{ background:"none", border:"none", cursor:"pointer",
-               color:C.gray3, fontSize:14, padding:"2px 5px",
-               borderRadius:4 }}
-      title="Usuń pracownika">✕</button>
-  )}
-</td>
+                    {/* delete button - admin only */}
+                    {isAdmin && (
+                      <td style={{ padding:"4px 6px", textAlign:"center", whiteSpace:"nowrap" }}>
+                        <button onClick={()=>toggleEmployeeActive(emp.id, emp.is_active)}
+                          style={{ background:"none", border:"none", cursor:"pointer",
+                                   color: emp.is_active===false ? "#DC2626" : "#3DAA70",
+                                   fontSize:13, padding:"2px 5px", borderRadius:4 }}
+                          title={emp.is_active===false ? "Aktywuj pracownika" : "Dezaktywuj pracownika"}>
+                          {emp.is_active===false ? "●" : "●"}
+                        </button>
+                        <button onClick={()=>deleteEmployee(emp.id)}
+                          style={{ background:"none", border:"none", cursor:"pointer",
+                                   color:C.gray3, fontSize:14, padding:"2px 5px",
+                                   borderRadius:4 }}
+                          title="Usuń pracownika">✕</button>
+                      </td>
+                    )}
                     {/* grand total */}
                     <td style={{ padding:"7px 10px", textAlign:"center",
                                  fontWeight:700, color:grandTotal>0?C.blue:C.gray3,
@@ -2359,6 +2360,30 @@ ${"NWŚCPSS"[dow]}`;
         }));
         const maxDay = Math.max(1,...dailyH.map(x=>x.h));
 
+        // ── Prognoza: metodologia ────────────────────────────────────────────
+        // 1) Zamiast średniej używamy MEDIANY per dzień tygodnia — odporna na
+        //    dni odstające (choroba, awaria, nietypowo długi dzień).
+        // 2) Próg minimalnej próby: jeśli dla danego dnia tygodnia mamy mniej niż
+        //    MIN_SAMPLES obserwacji, nie ekstrapolujemy z 1-2 punktów — używamy
+        //    mediany ogólnej (ze wszystkich przepracowanych dni projektu).
+        // Uwaga: to nadal NIE rozróżnia "brak danych" od "potwierdzone zero" —
+        // dni z 0h w hoursMap/pieceMap są pomijane przy budowie wzorca. Jeśli w
+        // aplikacji jawnie wpisujecie 0 dla dni bez pracy, wzorzec i tak je pominie
+        // (patrz rozmowa: to wymaga osobnej zmiany modelu danych, nie tylko liczenia).
+        const MIN_SAMPLES = 3;
+        function median(arr) {
+          if (!arr.length) return 0;
+          const s = [...arr].sort((a,b)=>a-b);
+          const mid = Math.floor(s.length/2);
+          return s.length%2 ? s[mid] : (s[mid-1]+s[mid])/2;
+        }
+        function buildDowAverages(valsByDow) {
+          const overall = median(valsByDow.flat());
+          const avg = valsByDow.map(v => v.length>=MIN_SAMPLES ? median(v) : overall);
+          const sampleDays = valsByDow.reduce((s,v)=>s+v.length,0);
+          return { avg, sampleDays };
+        }
+
         const projRows = [...myProjects]
           .map(p=>{
             const h        = projTotal(p.id);
@@ -2368,23 +2393,23 @@ ${"NWŚCPSS"[dow]}`;
             const wH       = Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
             const empCount = employees.filter(e=>empTotal(p.id,e.id)>0).length;
             const stuCount = studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
-            // Prognoza per projekt: wzorzec dni tygodnia × stawka projektu
+            // Prognoza per projekt: wzorzec dni tygodnia (mediana + próg min. próby) × stawka projektu
             // Pomijamy dni z 0h (brak danych) przy liczeniu wzorca
-            const pDowH  = [0,0,0,0,0,0,0]; const pDowC  = [0,0,0,0,0,0,0];
-            const pDowSH = [0,0,0,0,0,0,0]; const pDowSC = [0,0,0,0,0,0,0];
-            const pDowWH = [0,0,0,0,0,0,0]; const pDowWC = [0,0,0,0,0,0,0];
+            const pDowVals  = [[],[],[],[],[],[],[]];
+            const pDowSVals = [[],[],[],[],[],[],[]];
+            const pDowWVals = [[],[],[],[],[],[],[]];
             for (let d=1;d<=patternDaysPassed;d++){
               const dow=new Date(year,month,d).getDay();
               const dh=dayTotal(p.id,d);
-              if(dh>0){ pDowH[dow]+=dh; pDowC[dow]++; }
+              if(dh>0) pDowVals[dow].push(dh);
               const dsh=studentEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
-              if(dsh>0){ pDowSH[dow]+=dsh; pDowSC[dow]++; }
+              if(dsh>0) pDowSVals[dow].push(dsh);
               const dwh=workerEmps.reduce((s,e)=>s+(parseFloat(hoursMap[`${p.id}|${e.id}|${toDateStr(year,month,d)}`])||0),0);
-              if(dwh>0){ pDowWH[dow]+=dwh; pDowWC[dow]++; }
+              if(dwh>0) pDowWVals[dow].push(dwh);
             }
-            const pDowAvg  = pDowH.map((hh,i)=>pDowC[i]>0?hh/pDowC[i]:0);
-            const pDowAvgS = pDowSH.map((hh,i)=>pDowSC[i]>0?hh/pDowSC[i]:0);
-            const pDowAvgW = pDowWH.map((hh,i)=>pDowWC[i]>0?hh/pDowWC[i]:0);
+            const { avg: pDowAvg,  sampleDays: forecastSampleDays } = buildDowAverages(pDowVals);
+            const { avg: pDowAvgS } = buildDowAverages(pDowSVals);
+            const { avg: pDowAvgW } = buildDowAverages(pDowWVals);
             let fH=0, fSH=0, fWH=0;
             for(let d=daysPassed+1;d<=daysTotal;d++){
               const dow=new Date(year,month,d).getDay();
@@ -2412,16 +2437,18 @@ ${"NWŚCPSS"[dow]}`;
 
             // Prognoza akordu wg wzorca dni tygodnia
             let pieceForecast = 0;
+            let pieceForecastSampleDays = 0;
             if (pr && pr.rate > 0) {
-              const pwDowH = [0,0,0,0,0,0,0]; const pwDowC = [0,0,0,0,0,0,0];
+              const pwDowVals = [[],[],[],[],[],[],[]];
               for (let d=1; d<=patternDaysPassed; d++) {
                 const dqty = getPWDay(p.id, d);
                 if (dqty > 0) {
                   const dow = new Date(year,month,d).getDay();
-                  pwDowH[dow] += dqty; pwDowC[dow]++;
+                  pwDowVals[dow].push(dqty);
                 }
               }
-              const pwDowAvg = pwDowH.map((hh,i) => pwDowC[i]>0 ? hh/pwDowC[i] : 0);
+              const { avg: pwDowAvg, sampleDays } = buildDowAverages(pwDowVals);
+              pieceForecastSampleDays = sampleDays;
               let fQty = 0;
               for (let d=daysPassed+1; d<=daysTotal; d++) {
                 fQty += pwDowAvg[new Date(year,month,d).getDay()];
@@ -2429,7 +2456,7 @@ ${"NWŚCPSS"[dow]}`;
               pieceForecast = Math.round((pieceRev + fQty * pr.rate)*100)/100;
             }
 
-            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH, pieceRev, pieceQty, pieceUnit, pieceForecast};
+            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH, pieceRev, pieceQty, pieceUnit, pieceForecast, forecastSampleDays, pieceForecastSampleDays};
           })
           .filter(r=>r.h>0 || r.pieceRev>0)
           .sort((a,b)=>{
