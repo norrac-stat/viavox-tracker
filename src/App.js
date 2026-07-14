@@ -129,6 +129,10 @@ export default function App() {
   const [managers,   setManagers]   = useState([]);
   const [rates,      setRates]      = useState({});
   const [pieceRates, setPieceRates] = useState({});
+  // Stawki wynagrodzeń per projekt: studentRate = stawka brutto (UZS/studenci), workerRate = stawka netto (UZSO/pozostali)
+  const [wageRates, setWageRates] = useState({});
+  const [wageModalProj, setWageModalProj] = useState(null);
+  const [rateModalProj, setRateModalProj] = useState(null);
   const [importData,      setImportData]      = useState(null);
   const [prevMonthEmps,   setPrevMonthEmps]   = useState({});
   const [multiMonthMap,   setMultiMonthMap]   = useState({});
@@ -233,6 +237,16 @@ export default function App() {
             const prMap = {};
             prs.forEach(r => { prMap[r.project_id] = { rate: parseFloat(r.rate), unit: r.unit }; });
             setPieceRates(prMap);
+          });
+      } catch(e) {}
+
+      try {
+        supabase.from("wage_rates").select("project_id,student_rate,worker_rate")
+          .then(({ data: wrs }) => {
+            if (!wrs) return;
+            const wrMap = {};
+            wrs.forEach(r => { wrMap[r.project_id] = { studentRate: parseFloat(r.student_rate)||0, workerRate: parseFloat(r.worker_rate)||0 }; });
+            setWageRates(wrMap);
           });
       } catch(e) {}
     }
@@ -1018,7 +1032,8 @@ export default function App() {
       "Godz. UZS","Godz. UZSO","Łącznie",
       "Stawka","Przychód","Prognoza",
       "Akord szt.","Prog. Akord szt.",
-      "Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS"
+      "Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS",
+      "Wynagr. UZS brutto (prog.)","Wynagr. UZSO netto (prog.)","Wynagr. razem (prog.)"
     ]];
 
     projRows.forEach(r => {
@@ -1048,7 +1063,10 @@ export default function App() {
         progUZS,
         progUZSO,
         progTotal,
-        pct+"%"
+        pct+"%",
+        (r.wageStudentForecast||0) ? r.wageStudentForecast+" zł" : "—",
+        (r.wageWorkerForecast||0)  ? r.wageWorkerForecast+" zł"  : "—",
+        (r.wageForecast||0)        ? r.wageForecast+" zł"        : "—"
       ]);
     });
 
@@ -1063,7 +1081,10 @@ export default function App() {
       "—",
       Math.round(totalRevenue*100)/100+" zł",
       Math.round(forecastRev*100)/100+" zł",
-      "—","—","—","—","—","—"
+      "—","—","—","—","—",
+      Math.round(projRows.reduce((s,r)=>s+(r.wageStudentForecast||0),0)*100)/100+" zł",
+      Math.round(projRows.reduce((s,r)=>s+(r.wageWorkerForecast||0),0)*100)/100+" zł",
+      Math.round(projRows.reduce((s,r)=>s+(r.wageForecast||0),0)*100)/100+" zł"
     ]);
 
     const csv = rows.map(r => r.map(v => {
@@ -2456,7 +2477,19 @@ ${"NWŚCPSS"[dow]}`;
               pieceForecast = Math.round((pieceRev + fQty * pr.rate)*100)/100;
             }
 
-            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH, pieceRev, pieceQty, pieceUnit, pieceForecast, forecastSampleDays, pieceForecastSampleDays};
+            // Wynagrodzenia: stawka brutto dla UZS (studenci), stawka netto dla UZSO (pozostali) — per projekt
+            const wr = wageRates[p.id];
+            const studentWageRate = wr ? wr.studentRate : 0; // brutto
+            const workerWageRate  = wr ? wr.workerRate  : 0; // netto
+            const wageStudentActual   = Math.round(sH * studentWageRate * 100)/100;
+            const wageWorkerActual    = Math.round(wH * workerWageRate * 100)/100;
+            const wageActual          = Math.round((wageStudentActual + wageWorkerActual)*100)/100;
+            const wageStudentForecast = Math.round((sH+fSH) * studentWageRate * 100)/100;
+            const wageWorkerForecast  = Math.round((wH+fWH) * workerWageRate * 100)/100;
+            const wageForecast        = Math.round((wageStudentForecast + wageWorkerForecast)*100)/100;
+
+            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH, pieceRev, pieceQty, pieceUnit, pieceForecast, forecastSampleDays, pieceForecastSampleDays,
+                    studentWageRate, workerWageRate, wageStudentActual, wageWorkerActual, wageActual, wageStudentForecast, wageWorkerForecast, wageForecast};
           })
           .filter(r=>r.h>0 || r.pieceRev>0)
           .sort((a,b)=>{
@@ -2471,6 +2504,9 @@ ${"NWŚCPSS"[dow]}`;
               case 'h':        return dir*(a.h-b.h);
               case 'rate':     return dir*(a.rate-b.rate);
               case 'forecast': return dir*(a.forecast-b.forecast);
+              case 'wageStudentForecast': return dir*(a.wageStudentForecast-b.wageStudentForecast);
+              case 'wageWorkerForecast':  return dir*(a.wageWorkerForecast-b.wageWorkerForecast);
+              case 'wageForecast': return dir*(a.wageForecast-b.wageForecast);
               case 'pct':      return dir*((a.h>0?a.sH/a.h:0)-(b.h>0?b.sH/b.h:0));
               default:         return dir*(a.rev-b.rev);
             }
@@ -2479,6 +2515,12 @@ ${"NWŚCPSS"[dow]}`;
         const totalForecast = Math.round(projRows.reduce((s,r)=>s+r.forecast,0)*100)/100;
         const totalPieceForecast = Math.round(projRows.reduce((s,r)=>s+(r.pieceForecast||0),0)*100)/100;
         forecastRev = Math.round((totalForecast + totalPieceForecast)*100)/100;
+
+        // Wynagrodzenia: suma per projekt (stawka brutto UZS + stawka netto UZSO)
+        const totalWageActual         = Math.round(projRows.reduce((s,r)=>s+(r.wageActual||0),0)*100)/100;
+        const totalWageStudentForecast = Math.round(projRows.reduce((s,r)=>s+(r.wageStudentForecast||0),0)*100)/100;
+        const totalWageWorkerForecast  = Math.round(projRows.reduce((s,r)=>s+(r.wageWorkerForecast||0),0)*100)/100;
+        const totalWageForecast        = Math.round((totalWageStudentForecast + totalWageWorkerForecast)*100)/100;
 
         return (
         <div style={{ padding:"24px 28px", maxWidth:"100%" }}>
@@ -2514,7 +2556,7 @@ ${"NWŚCPSS"[dow]}`;
           </div>
 
           {/* KPI przychód */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:14 }}>
             <div style={{ background:C.white, border:`2px solid ${C.blue}`, borderRadius:10, padding:"16px 20px" }}>
               <div style={{ fontSize:10, color:C.gray4, fontWeight:500, marginBottom:5, textTransform:"uppercase" }}>
                 Przychód — {MONTHS[month]} (do teraz)
@@ -2530,6 +2572,15 @@ ${"NWŚCPSS"[dow]}`;
               <div style={{ fontSize:26, fontWeight:800, color:"#3DAA70" }}>{fmt(forecastRev)} zł</div>
               {totalPieceForecast>0&&<div style={{ fontSize:11, color:"#7B3FA0", marginTop:2 }}>w tym akord: {fmt(totalPieceForecast)} zł</div>}
               <div style={{ fontSize:11, color:C.gray4, marginTop:6 }}>Pozostało {workingDaysLeft} dni rob. × {fmt(dailyAvg)} zł/dzień rob.</div>
+            </div>
+            <div style={{ background:C.white, border:`2px solid #D97706`, borderRadius:10, padding:"16px 20px" }}>
+              <div style={{ fontSize:10, color:C.gray4, fontWeight:500, marginBottom:5, textTransform:"uppercase" }}>
+                Wynagrodzenia (prognoza) — {MONTHS[month]}
+              </div>
+              <div style={{ fontSize:26, fontWeight:800, color:"#D97706" }}>{fmt(totalWageForecast)} zł</div>
+              <div style={{ fontSize:11, color:"#3DAA70", marginTop:2 }}>UZS (brutto): {fmt(totalWageStudentForecast)} zł</div>
+              <div style={{ fontSize:11, color:C.blue }}>UZSO (netto): {fmt(totalWageWorkerForecast)} zł</div>
+              <div style={{ fontSize:11, color:C.gray4, marginTop:6 }}>Dotychczas naliczone: {fmt(totalWageActual)} zł</div>
             </div>
           </div>
 
@@ -2606,6 +2657,9 @@ ${"NWŚCPSS"[dow]}`;
                     {label:"Prog. UZSO h",  col:"fWH"},
                     {label:"Prog. Total h", col:"fH"},
                     {label:"% UZS",         col:"pct"},
+                    {label:"Wynagr. UZS (brutto)",  col:"wageStudentForecast"},
+                    {label:"Wynagr. UZSO (netto)",  col:"wageWorkerForecast"},
+                    {label:"Wynagr. razem",         col:"wageForecast"},
                   ].map(({label,col})=>(
                     <th key={col} onClick={()=>toggleSort(col)}
                       style={{ padding:"8px 10px",
@@ -2622,9 +2676,9 @@ ${"NWŚCPSS"[dow]}`;
               </thead>
               <tbody>
                 {projRows.length===0&&(
-                  <tr><td colSpan={15} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
+                  <tr><td colSpan={19} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
                 )}
-                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH,pieceRev,pieceQty,pieceUnit,pieceForecast},ri)=>{
+                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH,pieceRev,pieceQty,pieceUnit,pieceForecast,wageStudentForecast,wageWorkerForecast,wageForecast},ri)=>{
                   const pct=h>0?Math.round((sH/h)*100):0; const rowBg=ri%2===0?C.white:"#F8FAFC";
                   return (
                     <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
@@ -2635,7 +2689,19 @@ ${"NWŚCPSS"[dow]}`;
                       <td style={{ padding:"8px 10px", textAlign:"center", color:"#3DAA70", fontWeight:500 }}>{sH>0?`${sH}h`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"center", color:C.blue, fontWeight:500 }}>{wH>0?`${wH}h`:"—"}</td>
                       <td style={{ padding:"8px 10px", textAlign:"center", fontWeight:700, color:C.blue }}>{h}h</td>
-                      <td style={{ padding:"8px 10px", textAlign:"center", color:rate>0?C.gray6:C.gray3, fontSize:11 }}>{rate>0?`${rate.toFixed(2)} zł`:"—"}</td>
+                      <td style={{ padding:"8px 10px", textAlign:"center", color:rate>0?C.gray6:C.gray3, fontSize:11 }}>
+                        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:5 }}>
+                          <span>{rate>0?`${rate.toFixed(2)} zł`:"—"}</span>
+                          {isAdmin && (
+                            <button onClick={()=>{setRateModalProj(p.id); setModal("projectRate");}}
+                              title="Zmień stawkę projektu (używaną do przychodu i prognozy)"
+                              style={{ background:"none", border:"none", cursor:"pointer",
+                                       color:C.gray4, fontSize:12, padding:"1px 3px", borderRadius:4 }}>
+                              ✎
+                            </button>
+                          )}
+                        </div>
+                      </td>
                       <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:700, color:(rev+pieceRev)>0?"#1F7A4C":C.gray3, whiteSpace:"nowrap" }}>
                         {(rev+pieceRev)>0?`${fmt(Math.round((rev+pieceRev)*100)/100)} zł`:"—"}
                       </td>
@@ -2657,6 +2723,27 @@ ${"NWŚCPSS"[dow]}`;
                             <div style={{ height:"100%", width:`${pct}%`, background:"#3DAA70", borderRadius:3 }}/>
                           </div>
                           <span style={{ fontSize:10, color:C.gray5, minWidth:26 }}>{pct}%</span>
+                        </div>
+                      </td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", color:"#3DAA70", fontSize:11, whiteSpace:"nowrap" }}>
+                        {wageStudentForecast>0?`${fmt(wageStudentForecast)} zł`:"—"}
+                      </td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", color:C.blue, fontSize:11, whiteSpace:"nowrap" }}>
+                        {wageWorkerForecast>0?`${fmt(wageWorkerForecast)} zł`:"—"}
+                      </td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", whiteSpace:"nowrap" }}>
+                        <div style={{ display:"flex", alignItems:"center", justifyContent:"flex-end", gap:6 }}>
+                          <span style={{ fontWeight:700, color:wageForecast>0?"#D97706":C.gray3, fontSize:11 }}>
+                            {wageForecast>0?`${fmt(wageForecast)} zł`:"—"}
+                          </span>
+                          {isAdmin && (
+                            <button onClick={()=>{setWageModalProj(p.id); setModal("wageRates");}}
+                              title="Ustaw stawki wynagrodzeń (brutto UZS / netto UZSO)"
+                              style={{ background:"none", border:"none", cursor:"pointer",
+                                       color:C.gray4, fontSize:12, padding:"2px 4px", borderRadius:4 }}>
+                              ✎
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -2688,6 +2775,9 @@ ${"NWŚCPSS"[dow]}`;
                     <td style={{ padding:"9px 10px", textAlign:"right", color:C.blue, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.wH+(r.fWH||0),0)*100)/100}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.h+(r.fH||0),0)*100)/100}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>{stuPct}%</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:12 }}>{fmt(totalWageStudentForecast)} zł</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:C.blue, fontSize:12 }}>{fmt(totalWageWorkerForecast)} zł</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#D97706", fontSize:13, fontWeight:700 }}>{fmt(totalWageForecast)} zł</td>
                   </tr>
                 )}
               </tbody>
@@ -2696,6 +2786,83 @@ ${"NWŚCPSS"[dow]}`;
         </div>
         );
       })()}
+
+      {modal==="projectRate" && rateModalProj && (()=>{
+        const proj = projects.find(p=>p.id===rateModalProj);
+        return (
+        <div className="modal-bg" onClick={()=>{setModal(null);setRateModalProj(null);}}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div style={{ fontWeight:700, fontSize:18, color:C.gray7 }}>Stawka projektu</div>
+            <div style={{ color:C.gray5, fontSize:13 }}>{proj?.name}</div>
+            <div style={{ background:C.blueLight, border:`1px solid ${C.blueMid}`, borderRadius:8, padding:12, fontSize:12, color:C.blueDark, lineHeight:1.5 }}>
+              Ta stawka (zł/h) jest używana do liczenia bieżącego przychodu projektu oraz prognozy przychodu na koniec miesiąca.
+            </div>
+            {!proj?.number && (
+              <div style={{ background:"#FEF3C7", border:"1px solid #FDE68A", borderRadius:8, padding:12, fontSize:12, color:"#92400E" }}>
+                Ten projekt nie ma przypisanego numeru — stawka nie zostanie powiązana poprawnie. Ustaw numer projektu przed zapisem.
+              </div>
+            )}
+            <div>
+              <label className="lbl">Stawka (zł/h)</label>
+              <input className="inp" type="number" min="0" step="0.01" id="pjr-rate"
+                defaultValue={proj?.number ? (rates[proj.number]||"") : ""}
+                placeholder="np. 45.00" />
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <button className="btn" disabled={!proj?.number} onClick={async()=>{
+                const newRate = parseFloat(document.getElementById("pjr-rate").value)||0;
+                await supabase.from("project_rates").upsert(
+                  { number: proj.number, rate: newRate },
+                  { onConflict: "number" }
+                );
+                setRates(prev=>({...prev, [proj.number]: newRate}));
+                setModal(null); setRateModalProj(null); showToast("Stawka projektu zapisana");
+              }}>Zapisz</button>
+              <button className="btn-ghost" onClick={()=>{setModal(null);setRateModalProj(null);}}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+
+      {modal==="wageRates" && wageModalProj && (
+        <div className="modal-bg" onClick={()=>{setModal(null);setWageModalProj(null);}}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div style={{ fontWeight:700, fontSize:18, color:C.gray7 }}>Stawki wynagrodzeń</div>
+            <div style={{ color:C.gray5, fontSize:13 }}>
+              {projects.find(p=>p.id===wageModalProj)?.name}
+            </div>
+            <div style={{ background:C.blueLight, border:`1px solid ${C.blueMid}`, borderRadius:8, padding:12, fontSize:12, color:C.blueDark, lineHeight:1.5 }}>
+              Stawka brutto dotyczy godzin UZS (studenci), stawka netto — godzin UZSO (pozostali pracownicy).
+            </div>
+            <div>
+              <label className="lbl">Stawka brutto — UZS (zł/h)</label>
+              <input className="inp" type="number" min="0" step="0.01" id="wr-student"
+                defaultValue={wageRates[wageModalProj]?.studentRate || ""}
+                placeholder="np. 32.50" />
+            </div>
+            <div>
+              <label className="lbl">Stawka netto — UZSO (zł/h)</label>
+              <input className="inp" type="number" min="0" step="0.01" id="wr-worker"
+                defaultValue={wageRates[wageModalProj]?.workerRate || ""}
+                placeholder="np. 28.00" />
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <button className="btn" onClick={async()=>{
+                const studentRate = parseFloat(document.getElementById("wr-student").value)||0;
+                const workerRate  = parseFloat(document.getElementById("wr-worker").value)||0;
+                await supabase.from("wage_rates").upsert(
+                  { project_id: wageModalProj, student_rate: studentRate, worker_rate: workerRate },
+                  { onConflict: "project_id" }
+                );
+                setWageRates(prev=>({...prev, [wageModalProj]:{studentRate, workerRate}}));
+                setModal(null); setWageModalProj(null); showToast("Stawki wynagrodzeń zapisane");
+              }}>Zapisz</button>
+              <button className="btn-ghost" onClick={()=>{setModal(null);setWageModalProj(null);}}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modal==="addPieceRate" && activeProj && (
         <div className="modal-bg" onClick={()=>setModal(null)}>
