@@ -132,11 +132,13 @@ export default function App() {
   const [importData,      setImportData]      = useState(null);
   const [prevMonthEmps,   setPrevMonthEmps]   = useState({});
   const [multiMonthMap,   setMultiMonthMap]   = useState({});
-  const [exportEmpRange,  setExportEmpRange]  = useState(null); // {from, to} date strings // for employees tab cross-month view // projId -> Set of empIds
+  const [exportEmpRange,  setExportEmpRange]  = useState(null);
+  const [exportProjRange, setExportProjRange] = useState(null); // {from, to} date strings // for employees tab cross-month view // projId -> Set of empIds
   const [importProj,      setImportProj]      = useState("");
   const [importHoursRows, setImportHoursRows] = useState([]);
   const [importingHours,  setImportingHours]  = useState(false);
-  const [exportingReport, setExportingReport] = useState(false);
+  const [exportingEmpReport,  setExportingEmpReport]  = useState(false);
+  const [exportingProjReport, setExportingProjReport] = useState(false);
   const [pieceMap,   setPieceMap]   = useState({}); // projId|empId|date -> quantity
   const [reportSortCol, setReportSortCol] = useState('rev');
   const [reportSortDir, setReportSortDir] = useState('desc');
@@ -951,7 +953,7 @@ export default function App() {
       showToast("Nieprawidłowy zakres dat", "err"); return;
     }
 
-    setExportingReport(true);
+    setExportingEmpReport(true);
     showToast("Pobieranie danych...", "info");
 
     // Build list of days in range using UTC throughout, so display and lookup
@@ -962,8 +964,8 @@ export default function App() {
     {
       const [y, m, d]    = fromDate.split("-").map(Number);
       const [ey, em, ed] = toDate.split("-").map(Number);
-      let cur      = new Date(Date.UTC(y, m-1, d));
-      const end    = new Date(Date.UTC(ey, em-1, ed));
+      let cur   = new Date(Date.UTC(y, m-1, d));
+      const end = new Date(Date.UTC(ey, em-1, ed));
       while (cur <= end) {
         days.push(cur.toISOString().substring(0, 10));
         dayHeaders.push(`${cur.getUTCDate()}.${String(cur.getUTCMonth()+1).padStart(2,"0")} ${WD[cur.getUTCDay()]}`);
@@ -984,7 +986,7 @@ export default function App() {
         .range(idx, idx + PAGE - 1);
       if (error) {
         showToast("Błąd pobierania danych: " + error.message, "err");
-        setExportingReport(false);
+        setExportingEmpReport(false);
         return;
       }
       if (!data || data.length === 0) break;
@@ -1027,7 +1029,7 @@ export default function App() {
 
     if (rows.length <= 1) {
       showToast("Brak danych w wybranym zakresie", "err");
-      setExportingReport(false);
+      setExportingEmpReport(false);
       return;
     }
 
@@ -1043,8 +1045,118 @@ export default function App() {
     a.download = `VIAVOX_Pracownicy_${fromDate}_${toDate}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    setExportingReport(false);
+    setExportingEmpReport(false);
     showToast(`Pobrano: ${rows.length-1} wierszy, ${days.length} dni`);
+  }
+
+  async function exportProjectDayByDay(fromDate, toDate) {
+    if (!fromDate || !toDate || fromDate > toDate) {
+      showToast("Nieprawidłowy zakres dat", "err"); return;
+    }
+
+    setExportingProjReport(true);
+    showToast("Pobieranie danych...", "info");
+
+    // Build list of days using UTC throughout — avoids the local-timezone
+    // off-by-one that used to shift every day header back by one day.
+    const days = [];
+    const dayHeaders = [];
+    const WD = ["N","P","W","Ś","C","P","S"]; // Nie, Pon, Wt, Śr, Czw, Pt, Sob
+    {
+      const [y, m, d]    = fromDate.split("-").map(Number);
+      const [ey, em, ed] = toDate.split("-").map(Number);
+      let cur   = new Date(Date.UTC(y, m-1, d));
+      const end = new Date(Date.UTC(ey, em-1, ed));
+      while (cur <= end) {
+        days.push(cur.toISOString().substring(0, 10));
+        dayHeaders.push(`${cur.getUTCDate()}.${String(cur.getUTCMonth()+1).padStart(2,"0")} ${WD[cur.getUTCDay()]}`);
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+    }
+
+    // Fetch exactly the requested range directly from the DB — don't rely on
+    // hoursMap/multiMonthMap, which may still be loading in the background
+    // (this was causing whole months to show up blank in the export).
+    // Aggregate straight into perProjDay[projId][date] = totalHours, so we
+    // don't need to loop over every row for every day afterwards.
+    const perProjDay = {};
+    const PAGE = 2000;
+    let idx = 0;
+    while (true) {
+      const { data, error } = await supabase.from("hours")
+        .select("project_id,work_date,hours")
+        .gte("work_date", fromDate).lte("work_date", toDate)
+        .range(idx, idx + PAGE - 1);
+      if (error) {
+        showToast("Błąd pobierania danych: " + error.message, "err");
+        setExportingProjReport(false);
+        return;
+      }
+      if (!data || data.length === 0) break;
+      for (const row of data) {
+        const dateKey = String(row.work_date).substring(0, 10);
+        if (!perProjDay[row.project_id]) perProjDay[row.project_id] = {};
+        perProjDay[row.project_id][dateKey] =
+          (perProjDay[row.project_id][dateKey] || 0) + (parseFloat(row.hours) || 0);
+      }
+      if (data.length < PAGE) break;
+      idx += PAGE;
+    }
+
+    const header = ["Nr","Projekt", ...dayHeaders, "SUMA"];
+    const rows   = [header];
+
+    myProjects.forEach(proj => {
+      let suma = 0;
+      const dayHours = days.map(d => {
+        const total = Math.round(((perProjDay[proj.id]?.[d]) || 0) * 100) / 100;
+        suma += total;
+        return total > 0 ? String(total).replace(".", ",") : "";
+      });
+
+      if (suma === 0) return;
+
+      rows.push([
+        proj.number || "",
+        proj.name,
+        ...dayHours,
+        String(Math.round(suma * 100) / 100).replace(".", ",")
+      ]);
+    });
+
+    // SUMA row
+    const sumaRow = ["", "SUMA WSZYSTKICH"];
+    days.forEach((_, di) => {
+      const colSum = rows.slice(1).reduce((s, r) => {
+        const v = parseFloat(String(r[2 + di]).replace(",", ".")) || 0;
+        return s + v;
+      }, 0);
+      sumaRow.push(colSum > 0 ? String(Math.round(colSum*100)/100).replace(".",",") : "");
+    });
+    const grandTotal = rows.slice(1).reduce((s,r) => s + (parseFloat(String(r[r.length-1]).replace(",",".")) || 0), 0);
+    sumaRow.push(String(Math.round(grandTotal*100)/100).replace(".",","));
+    rows.push(sumaRow);
+
+    if (rows.length <= 2) {
+      showToast("Brak danych w wybranym zakresie", "err");
+      setExportingProjReport(false);
+      return;
+    }
+
+    const csv = rows.map(r => r.map(v => {
+      const s = String(v);
+      return s.includes(";") || s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s;
+    }).join(";")).join("\r\n");
+
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url;
+    a.download = `VIAVOX_Projekty_${fromDate}_${toDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setExportingProjReport(false);
+    showToast(`Pobrano: ${rows.length-2} projektów, ${days.length} dni`);
   }
 
   function exportReportCSV(projRows, totalRevenue, forecastRev, monthName) {
@@ -2500,6 +2612,11 @@ ${"NWŚCPSS"[dow]}`;
             <span style={{ fontSize:11, color:C.gray4 }}>Dzień {daysPassed}/{daysTotal} — pozostało {daysLeft} dni</span>
             <div style={{ display:"flex", gap:6, marginLeft:"auto" }}>
               <button className="btn-ghost btn-sm" onClick={()=>exportReportCSV(projRows, totalRevenue, forecastRev, MONTHS[month])}>⬇ CSV Raport</button>
+              <button className="btn-ghost btn-sm" onClick={()=>{
+                const from = `${year}-${String(month+1).padStart(2,"0")}-01`;
+                const to   = `${year}-${String(month+1).padStart(2,"0")}-${String(daysTotal).padStart(2,"0")}`;
+                setExportProjRange({from, to});
+              }}>⬇ CSV Projekty day-by-day</button>
               <button className="btn-ghost btn-sm" onClick={exportToExcel}>⬇ Excel</button>
               <button className="btn-ghost btn-sm" onClick={exportToCSV}>⬇ CSV</button>
             </div>
@@ -2846,6 +2963,36 @@ ${"NWŚCPSS"[dow]}`;
         </div>
       )}
 
+      {exportProjRange && (
+        <div className="modal-bg" onClick={()=>setExportProjRange(null)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420}}>
+            <div style={{fontWeight:700,fontSize:18,color:C.gray7}}>⬇ Projekty day-by-day</div>
+            <div style={{fontSize:13,color:C.gray5}}>
+              Nr, Projekt + godziny łącznie per każdy dzień zakresu
+            </div>
+            <div style={{display:"flex",gap:12,alignItems:"center"}}>
+              <div style={{flex:1}}>
+                <label className="lbl">Od</label>
+                <input className="inp" type="date" value={exportProjRange.from}
+                  onChange={e=>setExportProjRange(v=>({...v,from:e.target.value}))} />
+              </div>
+              <div style={{flex:1}}>
+                <label className="lbl">Do</label>
+                <input className="inp" type="date" value={exportProjRange.to}
+                  onChange={e=>setExportProjRange(v=>({...v,to:e.target.value}))} />
+              </div>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn" disabled={exportingProjReport} onClick={async ()=>{
+                await exportProjectDayByDay(exportProjRange.from, exportProjRange.to);
+                setExportProjRange(null);
+              }}>{exportingProjReport ? "Pobieranie…" : "Pobierz CSV"}</button>
+              <button className="btn-ghost" onClick={()=>setExportProjRange(null)}>Anuluj</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {exportEmpRange && (
         <div className="modal-bg" onClick={()=>setExportEmpRange(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420}}>
@@ -2866,10 +3013,10 @@ ${"NWŚCPSS"[dow]}`;
               </div>
             </div>
             <div style={{display:"flex",gap:10}}>
-              <button className="btn" disabled={exportingReport} onClick={async ()=>{
+              <button className="btn" disabled={exportingEmpReport} onClick={async ()=>{
                 await exportEmployeeReport(exportEmpRange.from, exportEmpRange.to);
                 setExportEmpRange(null);
-              }}>{exportingReport ? "Pobieranie…" : "Pobierz CSV"}</button>
+              }}>{exportingEmpReport ? "Pobieranie…" : "Pobierz CSV"}</button>
               <button className="btn-ghost" onClick={()=>setExportEmpRange(null)}>Anuluj</button>
             </div>
           </div>
