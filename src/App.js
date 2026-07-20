@@ -132,11 +132,11 @@ export default function App() {
   const [importData,      setImportData]      = useState(null);
   const [prevMonthEmps,   setPrevMonthEmps]   = useState({});
   const [multiMonthMap,   setMultiMonthMap]   = useState({});
-  const [exportEmpRange,  setExportEmpRange]  = useState(null);
-  const [exportProjRange, setExportProjRange] = useState(null); // {from, to} date strings // for employees tab cross-month view // projId -> Set of empIds
+  const [exportEmpRange,  setExportEmpRange]  = useState(null); // {from, to} date strings // for employees tab cross-month view // projId -> Set of empIds
   const [importProj,      setImportProj]      = useState("");
   const [importHoursRows, setImportHoursRows] = useState([]);
   const [importingHours,  setImportingHours]  = useState(false);
+  const [exportingReport, setExportingReport] = useState(false);
   const [pieceMap,   setPieceMap]   = useState({}); // projId|empId|date -> quantity
   const [reportSortCol, setReportSortCol] = useState('rev');
   const [reportSortDir, setReportSortDir] = useState('desc');
@@ -946,26 +946,55 @@ export default function App() {
     showToast(`Import: ${ok} wpisów OK${err>0?" | "+err+" błędów":""}`);
   }
 
-  function exportEmployeeReport(fromDate, toDate) {
+  async function exportEmployeeReport(fromDate, toDate) {
     if (!fromDate || !toDate || fromDate > toDate) {
       showToast("Nieprawidłowy zakres dat", "err"); return;
     }
-    const mapToUse = { ...multiMonthMap, ...hoursMap };
 
-    // Build list of days in range
+    setExportingReport(true);
+    showToast("Pobieranie danych...", "info");
+
+    // Build list of days in range using UTC throughout, so display and lookup
+    // keys always agree — avoids the local-timezone off-by-one on day headers.
     const days = [];
-    const cur = new Date(fromDate);
-    const end = new Date(toDate);
-    while (cur <= end) {
-      days.push(cur.toISOString().substring(0, 10));
-      cur.setDate(cur.getDate() + 1);
+    const dayHeaders = [];
+    const WD = ["N","P","W","Ś","C","P","S"]; // Nie, Pon, Wt, Śr, Czw, Pt, Sob
+    {
+      const [y, m, d]    = fromDate.split("-").map(Number);
+      const [ey, em, ed] = toDate.split("-").map(Number);
+      let cur      = new Date(Date.UTC(y, m-1, d));
+      const end    = new Date(Date.UTC(ey, em-1, ed));
+      while (cur <= end) {
+        days.push(cur.toISOString().substring(0, 10));
+        dayHeaders.push(`${cur.getUTCDate()}.${String(cur.getUTCMonth()+1).padStart(2,"0")} ${WD[cur.getUTCDay()]}`);
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
     }
 
-    const dayHeaders = days.map(d => {
-      const dt = new Date(d);
-      const dow = dt.getDay();
-      return `${dt.getDate()}.${String(dt.getMonth()+1).padStart(2,"0")} ${"N W Ś C P S N".split(" ")[dow]}`;
-    });
+    // Fetch exactly the requested range directly from the DB — don't rely on
+    // hoursMap/multiMonthMap, which may still be loading in the background
+    // (this was causing whole months to show up blank in the export).
+    const freshMap = {};
+    const PAGE = 2000;
+    let idx = 0;
+    while (true) {
+      const { data, error } = await supabase.from("hours")
+        .select("project_id,employee_id,work_date,hours")
+        .gte("work_date", fromDate).lte("work_date", toDate)
+        .range(idx, idx + PAGE - 1);
+      if (error) {
+        showToast("Błąd pobierania danych: " + error.message, "err");
+        setExportingReport(false);
+        return;
+      }
+      if (!data || data.length === 0) break;
+      for (const row of data) {
+        const dateKey = String(row.work_date).substring(0, 10);
+        freshMap[`${row.project_id}|${row.employee_id}|${dateKey}`] = String(row.hours);
+      }
+      if (data.length < PAGE) break;
+      idx += PAGE;
+    }
 
     const header = ["Nazwisko","Imię","Nr UK","Typ","Projekt","Nr proj.", ...dayHeaders, "SUMA"];
     const rows   = [header];
@@ -977,7 +1006,7 @@ export default function App() {
         let suma = 0;
         const dayHours = days.map(d => {
           const key = `${proj.id}|${emp.id}|${d}`;
-          const h = parseFloat(mapToUse[key]) || 0;
+          const h = parseFloat(freshMap[key]) || 0;
           suma += h;
           return h > 0 ? String(h).replace(".", ",") : "";
         });
@@ -996,7 +1025,11 @@ export default function App() {
       });
     });
 
-    if (rows.length <= 1) { showToast("Brak danych w wybranym zakresie", "err"); return; }
+    if (rows.length <= 1) {
+      showToast("Brak danych w wybranym zakresie", "err");
+      setExportingReport(false);
+      return;
+    }
 
     const csv = rows.map(r => r.map(v => {
       const s = String(v);
@@ -1010,90 +1043,8 @@ export default function App() {
     a.download = `VIAVOX_Pracownicy_${fromDate}_${toDate}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    setExportingReport(false);
     showToast(`Pobrano: ${rows.length-1} wierszy, ${days.length} dni`);
-  }
-
-  function exportProjectDayByDay(fromDate, toDate) {
-    if (!fromDate || !toDate || fromDate > toDate) {
-      showToast("Nieprawidłowy zakres dat", "err"); return;
-    }
-    const mapToUse = { ...multiMonthMap, ...hoursMap };
-
-    // Build list of days
-    const days = [];
-    const cur = new Date(fromDate + "T00:00:00");
-    const end = new Date(toDate   + "T00:00:00");
-    while (cur <= end) {
-      days.push(cur.toISOString().substring(0, 10));
-      cur.setDate(cur.getDate() + 1);
-    }
-
-    const dayHeaders = days.map(d => {
-      const dt  = new Date(d + "T00:00:00");
-      const dow = dt.getDay();
-      return `${dt.getDate()}.${String(dt.getMonth()+1).padStart(2,"0")} ${"N W Ś C P S N".split(" ")[dow]}`;
-    });
-
-    const header = ["Nr","Projekt", ...dayHeaders, "SUMA"];
-    const rows   = [header];
-
-    myProjects.forEach(proj => {
-      let suma = 0;
-      const dayHours = days.map(d => {
-        // Sum all employees for this project on this day
-        const dp = totalsCache.dayProj[proj.id];
-        const day = parseInt(d.substring(8, 10));
-        // Only count days within current hoursMap month; for others use mapToUse
-        let total = 0;
-        for (const [k, v] of Object.entries(mapToUse)) {
-          const [kProj, , kDate] = k.split("|");
-          if (kProj === proj.id && kDate === d) {
-            total += parseFloat(v) || 0;
-          }
-        }
-        total = Math.round(total * 100) / 100;
-        suma += total;
-        return total > 0 ? String(total).replace(".", ",") : "";
-      });
-
-      if (suma === 0) return;
-
-      rows.push([
-        proj.number || "",
-        proj.name,
-        ...dayHours,
-        String(Math.round(suma * 100) / 100).replace(".", ",")
-      ]);
-    });
-
-    // SUMA row
-    const sumaRow = ["", "SUMA WSZYSTKICH"];
-    days.forEach((_, di) => {
-      const colSum = rows.slice(1).reduce((s, r) => {
-        const v = parseFloat(String(r[2 + di]).replace(",", ".")) || 0;
-        return s + v;
-      }, 0);
-      sumaRow.push(colSum > 0 ? String(Math.round(colSum*100)/100).replace(".",",") : "");
-    });
-    const grandTotal = rows.slice(1).reduce((s,r) => s + (parseFloat(String(r[r.length-1]).replace(",",".")) || 0), 0);
-    sumaRow.push(String(Math.round(grandTotal*100)/100).replace(".",","));
-    rows.push(sumaRow);
-
-    if (rows.length <= 2) { showToast("Brak danych w wybranym zakresie", "err"); return; }
-
-    const csv = rows.map(r => r.map(v => {
-      const s = String(v);
-      return s.includes(";") || s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s;
-    }).join(";")).join("\r\n");
-
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href = url;
-    a.download = `VIAVOX_Projekty_${fromDate}_${toDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast(`Pobrano: ${rows.length-2} projektów, ${days.length} dni`);
   }
 
   function exportReportCSV(projRows, totalRevenue, forecastRev, monthName) {
@@ -2549,11 +2500,6 @@ ${"NWŚCPSS"[dow]}`;
             <span style={{ fontSize:11, color:C.gray4 }}>Dzień {daysPassed}/{daysTotal} — pozostało {daysLeft} dni</span>
             <div style={{ display:"flex", gap:6, marginLeft:"auto" }}>
               <button className="btn-ghost btn-sm" onClick={()=>exportReportCSV(projRows, totalRevenue, forecastRev, MONTHS[month])}>⬇ CSV Raport</button>
-              <button className="btn-ghost btn-sm" onClick={()=>{
-                const from = `${year}-${String(month+1).padStart(2,"0")}-01`;
-                const to   = `${year}-${String(month+1).padStart(2,"0")}-${String(daysTotal).padStart(2,"0")}`;
-                setExportProjRange({from, to});
-              }}>⬇ CSV Projekty day-by-day</button>
               <button className="btn-ghost btn-sm" onClick={exportToExcel}>⬇ Excel</button>
               <button className="btn-ghost btn-sm" onClick={exportToCSV}>⬇ CSV</button>
             </div>
@@ -2900,36 +2846,6 @@ ${"NWŚCPSS"[dow]}`;
         </div>
       )}
 
-      {exportProjRange && (
-        <div className="modal-bg" onClick={()=>setExportProjRange(null)}>
-          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420}}>
-            <div style={{fontWeight:700,fontSize:18,color:C.gray7}}>⬇ Projekty day-by-day</div>
-            <div style={{fontSize:13,color:C.gray5}}>
-              Nr, Projekt + godziny łącznie per każdy dzień zakresu
-            </div>
-            <div style={{display:"flex",gap:12,alignItems:"center"}}>
-              <div style={{flex:1}}>
-                <label className="lbl">Od</label>
-                <input className="inp" type="date" value={exportProjRange.from}
-                  onChange={e=>setExportProjRange(v=>({...v,from:e.target.value}))} />
-              </div>
-              <div style={{flex:1}}>
-                <label className="lbl">Do</label>
-                <input className="inp" type="date" value={exportProjRange.to}
-                  onChange={e=>setExportProjRange(v=>({...v,to:e.target.value}))} />
-              </div>
-            </div>
-            <div style={{display:"flex",gap:10}}>
-              <button className="btn" onClick={()=>{
-                exportProjectDayByDay(exportProjRange.from, exportProjRange.to);
-                setExportProjRange(null);
-              }}>Pobierz CSV</button>
-              <button className="btn-ghost" onClick={()=>setExportProjRange(null)}>Anuluj</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {exportEmpRange && (
         <div className="modal-bg" onClick={()=>setExportEmpRange(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420}}>
@@ -2950,10 +2866,10 @@ ${"NWŚCPSS"[dow]}`;
               </div>
             </div>
             <div style={{display:"flex",gap:10}}>
-              <button className="btn" onClick={()=>{
-                exportEmployeeReport(exportEmpRange.from, exportEmpRange.to);
+              <button className="btn" disabled={exportingReport} onClick={async ()=>{
+                await exportEmployeeReport(exportEmpRange.from, exportEmpRange.to);
                 setExportEmpRange(null);
-              }}>Pobierz CSV</button>
+              }}>{exportingReport ? "Pobieranie…" : "Pobierz CSV"}</button>
               <button className="btn-ghost" onClick={()=>setExportEmpRange(null)}>Anuluj</button>
             </div>
           </div>
