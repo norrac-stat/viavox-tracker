@@ -156,6 +156,7 @@ export default function App() {
   const [searchQ,    setSearchQ]    = useState("");
   const [empProjFilter, setEmpProjFilter] = useState("all"); // "all" or project id
   const [showInactiveEmps, setShowInactiveEmps] = useState(false);
+  const [showInactiveProjects, setShowInactiveProjects] = useState(false);
   const [tab,        setTab]        = useState("timesheet");
   const [modal,      setModal]      = useState(null);
 
@@ -1827,10 +1828,10 @@ ${"NWŚCPSS"[dow]}`;
         const days = daysInMonth(year, month);
         const pwProjects = myProjects.filter(p => pieceRates[p.id]);
 
-        // Show ALL employees for the selected project, just order those with existing data first
-        // (previously this filtered OUT any employee without existing piece-work data as soon as
-        // at least one employee had data, which made it impossible to find/add new employees via search)
-        const pwEmps = activeProj
+        // AKORD: ten sam mechanizm co w Timesheet —
+        // bez wpisanej frazy pokazujemy tylko pracowników już przypisanych/z danymi w projekcie,
+        // ale gdy user zacznie szukać, przeszukujemy WSZYSTKICH pracowników (żeby dało się dodać nowego).
+        const pwEmpsOnProject = activeProj
           ? (() => {
               const withDataIds = new Set(
                 employees.filter(e => {
@@ -1841,18 +1842,13 @@ ${"NWŚCPSS"[dow]}`;
               // Also mark employees who have piece_work entries in pieceMap for this project
               const projKeys = Object.keys(pieceMap).filter(k => k.startsWith(activeProj+"|"));
               projKeys.forEach(k => withDataIds.add(k.split("|")[1]));
-              // Always include every employee; just sort so those with data come first
-              return [...employees].sort((a,b) => {
-                const aHas = withDataIds.has(a.id) ? 0 : 1;
-                const bHas = withDataIds.has(b.id) ? 0 : 1;
-                if (aHas !== bHas) return aHas - bHas;
-                return `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`, "pl");
-              });
+              return employees.filter(e => withDataIds.has(e.id));
             })()
           : employees;
 
-        const filteredPWEmps = pwEmps.filter(e =>
-          `${e.first_name} ${e.last_name}`.toLowerCase().includes(searchQ.toLowerCase())
+        const pwQ = searchQ.toLowerCase().trim();
+        const filteredPWEmps = (pwQ ? employees : pwEmpsOnProject).filter(e =>
+          `${e.first_name} ${e.last_name}`.toLowerCase().includes(pwQ)
         );
 
         return (
@@ -2152,6 +2148,12 @@ ${"NWŚCPSS"[dow]}`;
             <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
               <button className="btn-ghost btn-sm" onClick={()=>setModal("importProj")}>⬆ Importuj z Excel/CSV</button>
               <button className="btn btn-sm" onClick={()=>setModal("addProj")}>+ Dodaj projekt</button>
+              <button className="btn-ghost btn-sm"
+                onClick={()=>setShowInactiveProjects(v=>!v)}
+                style={{ color: showInactiveProjects ? "#DC2626" : C.gray5,
+                         border: `1px solid ${showInactiveProjects ? "#DC2626" : C.gray3}` }}>
+                {showInactiveProjects ? "● Ukryj nieaktywnych" : "○ Pokaż nieaktywnych"}
+              </button>
             </div>
           </div>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
@@ -2166,7 +2168,8 @@ ${"NWŚCPSS"[dow]}`;
               </tr>
             </thead>
             <tbody>
-              {[...projects].sort((a,b)=>(a.number||'').localeCompare(b.number||'', 'pl', {numeric:true})).map((p,ri)=>{
+              {[...projects].filter(p => showInactiveProjects ? true : p.is_active !== false)
+                .sort((a,b)=>(a.number||'').localeCompare(b.number||'', 'pl', {numeric:true})).map((p,ri)=>{
                 const total=projTotal(p.id);
                 const empCount=employees.filter(e=>empTotal(p.id,e.id)>0).length;
                 const mgrs=managers.filter(m=>mgrProjects.some(mp=>mp.manager_id===m.id&&mp.project_id===p.id)&&!m.is_admin);
