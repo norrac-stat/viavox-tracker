@@ -196,7 +196,7 @@ export default function App() {
       // Load critical data first (managers + projects) — show UI faster
       const [{ data: mgrs, error: mgrsErr }, { data: projs }, { data: mp }] = await Promise.all([
         supabase.from("managers").select("id,name,pin,is_admin,is_viewer,is_active,is_coordinator").order("name"),
-        supabase.from("projects").select("id,name,number,is_active").order("name"),
+        supabase.from("projects").select("id,name,number").order("name"),
         supabase.from("manager_projects").select("manager_id,project_id"),
       ]);
       if (mgrsErr) {
@@ -701,14 +701,6 @@ export default function App() {
     }
     setFProjName(""); setFProjNum(""); setModal(null);
     setActiveProj(data.id); showToast("Projekt dodany");
-  }
-
-  async function toggleProjectActive(projId, currentActive) {
-    if (!currentManager?.is_admin) return; // tylko Administrator może (de)aktywować projekt
-    const newActive = currentActive === false ? true : false;
-    await supabase.from("projects").update({ is_active: newActive }).eq("id", projId);
-    setProjects(prev => prev.map(p => p.id === projId ? { ...p, is_active: newActive } : p));
-    showToast(newActive ? "Projekt aktywowany" : "Projekt dezaktywowany");
   }
 
   async function addManager() {
@@ -1709,14 +1701,12 @@ ${"NWŚCPSS"[dow]}`;
             </div>
             <button className="btn btn-sm" onClick={()=>setModal("addEmp")}>+ Dodaj pracownika</button>
             <button className="btn-ghost btn-sm" onClick={()=>{ const today=`${year}-${String(month+1).padStart(2,'0')}-01`; setExportEmpRange({from:today, to:`${year}-${String(month+1).padStart(2,'0')}-${String(daysInMonth(year,month)).padStart(2,'0')}`}); }}>⬇ Raport CSV</button>
-            {isAdmin && (
-              <button className="btn-ghost btn-sm"
-                onClick={()=>setShowInactiveEmps(v=>!v)}
-                style={{ color: showInactiveEmps ? "#DC2626" : C.gray5,
-                         border: `1px solid ${showInactiveEmps ? "#DC2626" : C.gray3}` }}>
-                {showInactiveEmps ? "● Ukryj nieaktywnych" : "○ Pokaż nieaktywnych"}
-              </button>
-            )}
+            <button className="btn-ghost btn-sm"
+              onClick={()=>setShowInactiveEmps(v=>!v)}
+              style={{ color: showInactiveEmps ? "#DC2626" : C.gray5,
+                       border: `1px solid ${showInactiveEmps ? "#DC2626" : C.gray3}` }}>
+              {showInactiveEmps ? "● Ukryj nieaktywnych" : "○ Pokaż nieaktywnych"}
+            </button>
           </div>
 
           {/* table */}
@@ -1791,23 +1781,23 @@ ${"NWŚCPSS"[dow]}`;
                         </td>
                       );
                     })}
-                    {/* delete button - admin only */}
-                    {isAdmin && (
-                      <td style={{ padding:"4px 6px", textAlign:"center", whiteSpace:"nowrap" }}>
-                        <button onClick={()=>toggleEmployeeActive(emp.id, emp.is_active)}
-                          style={{ background:"none", border:"none", cursor:"pointer",
-                                   color: emp.is_active===false ? "#DC2626" : "#3DAA70",
-                                   fontSize:13, padding:"2px 5px", borderRadius:4 }}
-                          title={emp.is_active===false ? "Aktywuj pracownika" : "Dezaktywuj pracownika"}>
-                          {emp.is_active===false ? "●" : "●"}
-                        </button>
+                    {/* activate/deactivate - wszystkie role; usuwanie - tylko admin */}
+                    <td style={{ padding:"4px 6px", textAlign:"center", whiteSpace:"nowrap" }}>
+                      <button onClick={()=>toggleEmployeeActive(emp.id, emp.is_active)}
+                        style={{ background:"none", border:"none", cursor:"pointer",
+                                 color: emp.is_active===false ? "#DC2626" : "#3DAA70",
+                                 fontSize:13, padding:"2px 5px", borderRadius:4 }}
+                        title={emp.is_active===false ? "Aktywuj pracownika" : "Dezaktywuj pracownika"}>
+                        {emp.is_active===false ? "●" : "●"}
+                      </button>
+                      {isAdmin && (
                         <button onClick={()=>deleteEmployee(emp.id)}
                           style={{ background:"none", border:"none", cursor:"pointer",
                                    color:C.gray3, fontSize:14, padding:"2px 5px",
                                    borderRadius:4 }}
                           title="Usuń pracownika">✕</button>
-                      </td>
-                    )}
+                      )}
+                    </td>
                     {/* grand total */}
                     <td style={{ padding:"7px 10px", textAlign:"center",
                                  fontWeight:700, color:grandTotal>0?C.blue:C.gray3,
@@ -2072,7 +2062,7 @@ ${"NWŚCPSS"[dow]}`;
                   </tr>
                 </thead>
                 <tbody>
-                  {myProjects.filter(p => p.is_active !== false).map((proj, ri) => {
+                  {myProjects.map((proj, ri) => {
                     const rowBg = ri%2===0 ? C.white : "#F8FAFC";
                     let projTotal = 0;
                     return (
@@ -2173,13 +2163,7 @@ ${"NWŚCPSS"[dow]}`;
                     <td style={{ padding:"8px 12px", color:C.gray4, fontWeight:500, whiteSpace:"nowrap", cursor:"pointer" }}
                       onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}>{p.number||"—"}</td>
                     <td style={{ padding:"8px 12px", fontWeight:600, color:C.gray7, cursor:"pointer" }}
-                      onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}>
-                      {p.name}
-                      {p.is_active===false&&
-                        <span style={{ fontSize:9, fontWeight:700, padding:"1px 6px",
-                          borderRadius:6, background:"#FEE2E2", color:"#DC2626", marginLeft:6 }}>
-                          NIEAKTYWNY</span>}
-                    </td>
+                      onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}>{p.name}</td>
                     <td style={{ padding:"8px 12px" }}>
                       <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
                         {mgrs.length===0
@@ -2197,15 +2181,6 @@ ${"NWŚCPSS"[dow]}`;
                     <td style={{ padding:"8px 12px", textAlign:"center", color:total>0?C.blue:C.gray3, fontWeight:600, fontSize:12 }}>{total>0?`${total}h`:"—"}</td>
                     <td style={{ padding:"8px 12px", textAlign:"center" }} onClick={e=>e.stopPropagation()}>
                       <div style={{ display:"flex", gap:4, justifyContent:"center" }}>
-                        {isAdmin && (
-                          <button onClick={()=>toggleProjectActive(p.id, p.is_active)}
-                            style={{ background:"none", border:"none", cursor:"pointer",
-                                     color: p.is_active===false ? "#DC2626" : "#3DAA70",
-                                     fontSize:13, padding:"2px 5px", borderRadius:4 }}
-                            title={p.is_active===false ? "Aktywuj projekt" : "Dezaktywuj projekt"}>
-                            ●
-                          </button>
-                        )}
                         <button className="btn-danger" style={{ padding:"3px 8px", fontSize:11 }}
                           onClick={async()=>{ if(!window.confirm(`Usunąć projekt "${p.name}"?`)) return;
                             await supabase.from("projects").delete().eq("id",p.id);
