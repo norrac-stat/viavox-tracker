@@ -196,7 +196,7 @@ export default function App() {
       // Load critical data first (managers + projects) — show UI faster
       const [{ data: mgrs, error: mgrsErr }, { data: projs }, { data: mp }] = await Promise.all([
         supabase.from("managers").select("id,name,pin,is_admin,is_viewer,is_active,is_coordinator").order("name"),
-        supabase.from("projects").select("id,name,number").order("name"),
+        supabase.from("projects").select("id,name,number,is_active").order("name"),
         supabase.from("manager_projects").select("manager_id,project_id"),
       ]);
       if (mgrsErr) {
@@ -373,7 +373,7 @@ export default function App() {
 
   const myProjectIdsSet = useMemo(() => new Set(myProjectIds), [myProjectIds]);
   const myProjects = useMemo(() =>
-    projects.filter(p => myProjectIdsSet.has(p.id)),
+    projects.filter(p => myProjectIdsSet.has(p.id) && p.is_active !== false),
     [projects, myProjectIdsSet]
   );
 
@@ -577,6 +577,14 @@ export default function App() {
     await supabase.from("employees").update({ is_active: newActive }).eq("id", empId);
     setEmployees(prev => prev.map(e => e.id === empId ? { ...e, is_active: newActive } : e));
     showToast(newActive ? "Pracownik aktywowany" : "Pracownik dezaktywowany");
+  }
+
+  async function toggleProjectActive(projId, currentActive) {
+    if (!isAdmin) { showToast("Tylko Administrator może (dez)aktywować projekt", "err"); return; }
+    const newActive = currentActive === false ? true : false;
+    await supabase.from("projects").update({ is_active: newActive }).eq("id", projId);
+    setProjects(prev => prev.map(p => p.id === projId ? { ...p, is_active: newActive } : p));
+    showToast(newActive ? "Projekt aktywowany" : "Projekt dezaktywowany");
   }
 
   async function deleteEmployee(empId) {
@@ -1819,20 +1827,27 @@ ${"NWŚCPSS"[dow]}`;
         const days = daysInMonth(year, month);
         const pwProjects = myProjects.filter(p => pieceRates[p.id]);
 
-        // Filter employees on selected project - show all employees but order those with data first
+        // Show ALL employees for the selected project, just order those with existing data first
+        // (previously this filtered OUT any employee without existing piece-work data as soon as
+        // at least one employee had data, which made it impossible to find/add new employees via search)
         const pwEmps = activeProj
           ? (() => {
-              const withData = employees.filter(e => {
-                for (let d=1;d<=days;d++) if (parseFloat(getPW(activeProj,e.id,d)||0)>0) return true;
-                return false;
-              });
-              // Also find employees who have piece_work entries in pieceMap for this project
+              const withDataIds = new Set(
+                employees.filter(e => {
+                  for (let d=1;d<=days;d++) if (parseFloat(getPW(activeProj,e.id,d)||0)>0) return true;
+                  return false;
+                }).map(e => e.id)
+              );
+              // Also mark employees who have piece_work entries in pieceMap for this project
               const projKeys = Object.keys(pieceMap).filter(k => k.startsWith(activeProj+"|"));
-              const empIdsWithData = new Set(projKeys.map(k => k.split("|")[1]));
-              const withPieceData = employees.filter(e => empIdsWithData.has(e.id));
-              // Merge both sets
-              const merged = [...new Map([...withData, ...withPieceData].map(e => [e.id, e])).values()];
-              return merged.length > 0 ? merged : employees;
+              projKeys.forEach(k => withDataIds.add(k.split("|")[1]));
+              // Always include every employee; just sort so those with data come first
+              return [...employees].sort((a,b) => {
+                const aHas = withDataIds.has(a.id) ? 0 : 1;
+                const bHas = withDataIds.has(b.id) ? 0 : 1;
+                if (aHas !== bHas) return aHas - bHas;
+                return `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`, "pl");
+              });
             })()
           : employees;
 
@@ -2155,15 +2170,22 @@ ${"NWŚCPSS"[dow]}`;
                 const total=projTotal(p.id);
                 const empCount=employees.filter(e=>empTotal(p.id,e.id)>0).length;
                 const mgrs=managers.filter(m=>mgrProjects.some(mp=>mp.manager_id===m.id&&mp.project_id===p.id)&&!m.is_admin);
-                const rowBg = ri%2===0 ? C.white : "#F8FAFC";
+                const isInactiveProj = p.is_active===false;
+                const rowBg = isInactiveProj ? "#FAFAFA" : (ri%2===0 ? C.white : "#F8FAFC");
                 return (
-                  <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}
+                  <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}`, opacity:isInactiveProj?0.55:1 }}
                     onMouseEnter={e=>e.currentTarget.style.background=C.blueLight}
                     onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
                     <td style={{ padding:"8px 12px", color:C.gray4, fontWeight:500, whiteSpace:"nowrap", cursor:"pointer" }}
                       onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}>{p.number||"—"}</td>
                     <td style={{ padding:"8px 12px", fontWeight:600, color:C.gray7, cursor:"pointer" }}
-                      onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}>{p.name}</td>
+                      onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}>
+                      {p.name}
+                      {isInactiveProj && (
+                        <span style={{ marginLeft:8, fontSize:10, fontWeight:600, color:"#DC2626",
+                                       background:"#FEE2E2", padding:"2px 6px", borderRadius:20 }}>NIEAKTYWNY</span>
+                      )}
+                    </td>
                     <td style={{ padding:"8px 12px" }}>
                       <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
                         {mgrs.length===0
@@ -2181,14 +2203,26 @@ ${"NWŚCPSS"[dow]}`;
                     <td style={{ padding:"8px 12px", textAlign:"center", color:total>0?C.blue:C.gray3, fontWeight:600, fontSize:12 }}>{total>0?`${total}h`:"—"}</td>
                     <td style={{ padding:"8px 12px", textAlign:"center" }} onClick={e=>e.stopPropagation()}>
                       <div style={{ display:"flex", gap:4, justifyContent:"center" }}>
-                        <button className="btn-danger" style={{ padding:"3px 8px", fontSize:11 }}
-                          onClick={async()=>{ if(!window.confirm(`Usunąć projekt "${p.name}"?`)) return;
-                            await supabase.from("projects").delete().eq("id",p.id);
-                            setProjects(prev=>prev.filter(x=>x.id!==p.id));
-                            setMgrProjects(prev=>prev.filter(mp=>mp.project_id!==p.id));
-                            if(activeProj===p.id) setActiveProj(null);
-                            showToast("Projekt usunięty");
-                          }}>✕</button>
+                        {isAdmin && (
+                          <button
+                            onClick={()=>toggleProjectActive(p.id, p.is_active)}
+                            style={{ background:"none", border:"none", cursor:"pointer",
+                                     color: isInactiveProj ? "#DC2626" : "#3DAA70",
+                                     fontSize:13, padding:"2px 5px", borderRadius:4 }}
+                            title={isInactiveProj ? "Aktywuj projekt" : "Dezaktywuj projekt"}>
+                            {isInactiveProj ? "○" : "●"}
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button className="btn-danger" style={{ padding:"3px 8px", fontSize:11 }}
+                            onClick={async()=>{ if(!window.confirm(`Usunąć projekt "${p.name}"?`)) return;
+                              await supabase.from("projects").delete().eq("id",p.id);
+                              setProjects(prev=>prev.filter(x=>x.id!==p.id));
+                              setMgrProjects(prev=>prev.filter(mp=>mp.project_id!==p.id));
+                              if(activeProj===p.id) setActiveProj(null);
+                              showToast("Projekt usunięty");
+                            }}>✕</button>
+                        )}
                       </div>
                     </td>
                   </tr>
