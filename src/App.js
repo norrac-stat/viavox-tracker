@@ -137,8 +137,6 @@ export default function App() {
   const [importProj,      setImportProj]      = useState("");
   const [importHoursRows, setImportHoursRows] = useState([]);
   const [importingHours,  setImportingHours]  = useState(false);
-  const [exportingEmpReport,  setExportingEmpReport]  = useState(false);
-  const [exportingProjReport, setExportingProjReport] = useState(false);
   const [pieceMap,   setPieceMap]   = useState({}); // projId|empId|date -> quantity
   const [reportSortCol, setReportSortCol] = useState('rev');
   const [reportSortDir, setReportSortDir] = useState('desc');
@@ -198,7 +196,7 @@ export default function App() {
       // Load critical data first (managers + projects) — show UI faster
       const [{ data: mgrs, error: mgrsErr }, { data: projs }, { data: mp }] = await Promise.all([
         supabase.from("managers").select("id,name,pin,is_admin,is_viewer,is_active,is_coordinator").order("name"),
-        supabase.from("projects").select("id,name,number").order("name"),
+        supabase.from("projects").select("id,name,number,is_active").order("name"),
         supabase.from("manager_projects").select("manager_id,project_id"),
       ]);
       if (mgrsErr) {
@@ -705,6 +703,14 @@ export default function App() {
     setActiveProj(data.id); showToast("Projekt dodany");
   }
 
+  async function toggleProjectActive(projId, currentActive) {
+    if (!currentManager?.is_admin) return; // tylko Administrator może (de)aktywować projekt
+    const newActive = currentActive === false ? true : false;
+    await supabase.from("projects").update({ is_active: newActive }).eq("id", projId);
+    setProjects(prev => prev.map(p => p.id === projId ? { ...p, is_active: newActive } : p));
+    showToast(newActive ? "Projekt aktywowany" : "Projekt dezaktywowany");
+  }
+
   async function addManager() {
     if (!fMgrName.trim() || fMgrPin.length !== 4) return;
     const { data, error } = await supabase.from("managers").insert({
@@ -948,55 +954,26 @@ export default function App() {
     showToast(`Import: ${ok} wpisów OK${err>0?" | "+err+" błędów":""}`);
   }
 
-  async function exportEmployeeReport(fromDate, toDate) {
+  function exportEmployeeReport(fromDate, toDate) {
     if (!fromDate || !toDate || fromDate > toDate) {
       showToast("Nieprawidłowy zakres dat", "err"); return;
     }
+    const mapToUse = { ...multiMonthMap, ...hoursMap };
 
-    setExportingEmpReport(true);
-    showToast("Pobieranie danych...", "info");
-
-    // Build list of days in range using UTC throughout, so display and lookup
-    // keys always agree — avoids the local-timezone off-by-one on day headers.
+    // Build list of days in range
     const days = [];
-    const dayHeaders = [];
-    const WD = ["N","P","W","Ś","C","P","S"]; // Nie, Pon, Wt, Śr, Czw, Pt, Sob
-    {
-      const [y, m, d]    = fromDate.split("-").map(Number);
-      const [ey, em, ed] = toDate.split("-").map(Number);
-      let cur   = new Date(Date.UTC(y, m-1, d));
-      const end = new Date(Date.UTC(ey, em-1, ed));
-      while (cur <= end) {
-        days.push(cur.toISOString().substring(0, 10));
-        dayHeaders.push(`${cur.getUTCDate()}.${String(cur.getUTCMonth()+1).padStart(2,"0")} ${WD[cur.getUTCDay()]}`);
-        cur.setUTCDate(cur.getUTCDate() + 1);
-      }
+    const cur = new Date(fromDate);
+    const end = new Date(toDate);
+    while (cur <= end) {
+      days.push(cur.toISOString().substring(0, 10));
+      cur.setDate(cur.getDate() + 1);
     }
 
-    // Fetch exactly the requested range directly from the DB — don't rely on
-    // hoursMap/multiMonthMap, which may still be loading in the background
-    // (this was causing whole months to show up blank in the export).
-    const freshMap = {};
-    const PAGE = 2000;
-    let idx = 0;
-    while (true) {
-      const { data, error } = await supabase.from("hours")
-        .select("project_id,employee_id,work_date,hours")
-        .gte("work_date", fromDate).lte("work_date", toDate)
-        .range(idx, idx + PAGE - 1);
-      if (error) {
-        showToast("Błąd pobierania danych: " + error.message, "err");
-        setExportingEmpReport(false);
-        return;
-      }
-      if (!data || data.length === 0) break;
-      for (const row of data) {
-        const dateKey = String(row.work_date).substring(0, 10);
-        freshMap[`${row.project_id}|${row.employee_id}|${dateKey}`] = String(row.hours);
-      }
-      if (data.length < PAGE) break;
-      idx += PAGE;
-    }
+    const dayHeaders = days.map(d => {
+      const dt = new Date(d);
+      const dow = dt.getDay();
+      return `${dt.getDate()}.${String(dt.getMonth()+1).padStart(2,"0")} ${"N W Ś C P S N".split(" ")[dow]}`;
+    });
 
     const header = ["Nazwisko","Imię","Nr UK","Typ","Projekt","Nr proj.", ...dayHeaders, "SUMA"];
     const rows   = [header];
@@ -1008,7 +985,7 @@ export default function App() {
         let suma = 0;
         const dayHours = days.map(d => {
           const key = `${proj.id}|${emp.id}|${d}`;
-          const h = parseFloat(freshMap[key]) || 0;
+          const h = parseFloat(mapToUse[key]) || 0;
           suma += h;
           return h > 0 ? String(h).replace(".", ",") : "";
         });
@@ -1027,11 +1004,7 @@ export default function App() {
       });
     });
 
-    if (rows.length <= 1) {
-      showToast("Brak danych w wybranym zakresie", "err");
-      setExportingEmpReport(false);
-      return;
-    }
+    if (rows.length <= 1) { showToast("Brak danych w wybranym zakresie", "err"); return; }
 
     const csv = rows.map(r => r.map(v => {
       const s = String(v);
@@ -1045,63 +1018,29 @@ export default function App() {
     a.download = `VIAVOX_Pracownicy_${fromDate}_${toDate}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    setExportingEmpReport(false);
     showToast(`Pobrano: ${rows.length-1} wierszy, ${days.length} dni`);
   }
 
-  async function exportProjectDayByDay(fromDate, toDate) {
+  function exportProjectDayByDay(fromDate, toDate) {
     if (!fromDate || !toDate || fromDate > toDate) {
       showToast("Nieprawidłowy zakres dat", "err"); return;
     }
+    const mapToUse = { ...multiMonthMap, ...hoursMap };
 
-    setExportingProjReport(true);
-    showToast("Pobieranie danych...", "info");
-
-    // Build list of days using UTC throughout — avoids the local-timezone
-    // off-by-one that used to shift every day header back by one day.
+    // Build list of days
     const days = [];
-    const dayHeaders = [];
-    const WD = ["N","P","W","Ś","C","P","S"]; // Nie, Pon, Wt, Śr, Czw, Pt, Sob
-    {
-      const [y, m, d]    = fromDate.split("-").map(Number);
-      const [ey, em, ed] = toDate.split("-").map(Number);
-      let cur   = new Date(Date.UTC(y, m-1, d));
-      const end = new Date(Date.UTC(ey, em-1, ed));
-      while (cur <= end) {
-        days.push(cur.toISOString().substring(0, 10));
-        dayHeaders.push(`${cur.getUTCDate()}.${String(cur.getUTCMonth()+1).padStart(2,"0")} ${WD[cur.getUTCDay()]}`);
-        cur.setUTCDate(cur.getUTCDate() + 1);
-      }
+    const cur = new Date(fromDate + "T00:00:00");
+    const end = new Date(toDate   + "T00:00:00");
+    while (cur <= end) {
+      days.push(cur.toISOString().substring(0, 10));
+      cur.setDate(cur.getDate() + 1);
     }
 
-    // Fetch exactly the requested range directly from the DB — don't rely on
-    // hoursMap/multiMonthMap, which may still be loading in the background
-    // (this was causing whole months to show up blank in the export).
-    // Aggregate straight into perProjDay[projId][date] = totalHours, so we
-    // don't need to loop over every row for every day afterwards.
-    const perProjDay = {};
-    const PAGE = 2000;
-    let idx = 0;
-    while (true) {
-      const { data, error } = await supabase.from("hours")
-        .select("project_id,work_date,hours")
-        .gte("work_date", fromDate).lte("work_date", toDate)
-        .range(idx, idx + PAGE - 1);
-      if (error) {
-        showToast("Błąd pobierania danych: " + error.message, "err");
-        setExportingProjReport(false);
-        return;
-      }
-      if (!data || data.length === 0) break;
-      for (const row of data) {
-        const dateKey = String(row.work_date).substring(0, 10);
-        if (!perProjDay[row.project_id]) perProjDay[row.project_id] = {};
-        perProjDay[row.project_id][dateKey] =
-          (perProjDay[row.project_id][dateKey] || 0) + (parseFloat(row.hours) || 0);
-      }
-      if (data.length < PAGE) break;
-      idx += PAGE;
-    }
+    const dayHeaders = days.map(d => {
+      const dt  = new Date(d + "T00:00:00");
+      const dow = dt.getDay();
+      return `${dt.getDate()}.${String(dt.getMonth()+1).padStart(2,"0")} ${"N W Ś C P S N".split(" ")[dow]}`;
+    });
 
     const header = ["Nr","Projekt", ...dayHeaders, "SUMA"];
     const rows   = [header];
@@ -1109,7 +1048,18 @@ export default function App() {
     myProjects.forEach(proj => {
       let suma = 0;
       const dayHours = days.map(d => {
-        const total = Math.round(((perProjDay[proj.id]?.[d]) || 0) * 100) / 100;
+        // Sum all employees for this project on this day
+        const dp = totalsCache.dayProj[proj.id];
+        const day = parseInt(d.substring(8, 10));
+        // Only count days within current hoursMap month; for others use mapToUse
+        let total = 0;
+        for (const [k, v] of Object.entries(mapToUse)) {
+          const [kProj, , kDate] = k.split("|");
+          if (kProj === proj.id && kDate === d) {
+            total += parseFloat(v) || 0;
+          }
+        }
+        total = Math.round(total * 100) / 100;
         suma += total;
         return total > 0 ? String(total).replace(".", ",") : "";
       });
@@ -1137,11 +1087,7 @@ export default function App() {
     sumaRow.push(String(Math.round(grandTotal*100)/100).replace(".",","));
     rows.push(sumaRow);
 
-    if (rows.length <= 2) {
-      showToast("Brak danych w wybranym zakresie", "err");
-      setExportingProjReport(false);
-      return;
-    }
+    if (rows.length <= 2) { showToast("Brak danych w wybranym zakresie", "err"); return; }
 
     const csv = rows.map(r => r.map(v => {
       const s = String(v);
@@ -1155,7 +1101,6 @@ export default function App() {
     a.download = `VIAVOX_Projekty_${fromDate}_${toDate}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    setExportingProjReport(false);
     showToast(`Pobrano: ${rows.length-2} projektów, ${days.length} dni`);
   }
 
@@ -2127,7 +2072,7 @@ ${"NWŚCPSS"[dow]}`;
                   </tr>
                 </thead>
                 <tbody>
-                  {myProjects.map((proj, ri) => {
+                  {myProjects.filter(p => p.is_active !== false).map((proj, ri) => {
                     const rowBg = ri%2===0 ? C.white : "#F8FAFC";
                     let projTotal = 0;
                     return (
@@ -2228,7 +2173,13 @@ ${"NWŚCPSS"[dow]}`;
                     <td style={{ padding:"8px 12px", color:C.gray4, fontWeight:500, whiteSpace:"nowrap", cursor:"pointer" }}
                       onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}>{p.number||"—"}</td>
                     <td style={{ padding:"8px 12px", fontWeight:600, color:C.gray7, cursor:"pointer" }}
-                      onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}>{p.name}</td>
+                      onClick={()=>{setActiveProj(p.id);setTab("timesheet");}}>
+                      {p.name}
+                      {p.is_active===false&&
+                        <span style={{ fontSize:9, fontWeight:700, padding:"1px 6px",
+                          borderRadius:6, background:"#FEE2E2", color:"#DC2626", marginLeft:6 }}>
+                          NIEAKTYWNY</span>}
+                    </td>
                     <td style={{ padding:"8px 12px" }}>
                       <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
                         {mgrs.length===0
@@ -2246,6 +2197,15 @@ ${"NWŚCPSS"[dow]}`;
                     <td style={{ padding:"8px 12px", textAlign:"center", color:total>0?C.blue:C.gray3, fontWeight:600, fontSize:12 }}>{total>0?`${total}h`:"—"}</td>
                     <td style={{ padding:"8px 12px", textAlign:"center" }} onClick={e=>e.stopPropagation()}>
                       <div style={{ display:"flex", gap:4, justifyContent:"center" }}>
+                        {isAdmin && (
+                          <button onClick={()=>toggleProjectActive(p.id, p.is_active)}
+                            style={{ background:"none", border:"none", cursor:"pointer",
+                                     color: p.is_active===false ? "#DC2626" : "#3DAA70",
+                                     fontSize:13, padding:"2px 5px", borderRadius:4 }}
+                            title={p.is_active===false ? "Aktywuj projekt" : "Dezaktywuj projekt"}>
+                            ●
+                          </button>
+                        )}
                         <button className="btn-danger" style={{ padding:"3px 8px", fontSize:11 }}
                           onClick={async()=>{ if(!window.confirm(`Usunąć projekt "${p.name}"?`)) return;
                             await supabase.from("projects").delete().eq("id",p.id);
@@ -2983,10 +2943,10 @@ ${"NWŚCPSS"[dow]}`;
               </div>
             </div>
             <div style={{display:"flex",gap:10}}>
-              <button className="btn" disabled={exportingProjReport} onClick={async ()=>{
-                await exportProjectDayByDay(exportProjRange.from, exportProjRange.to);
+              <button className="btn" onClick={()=>{
+                exportProjectDayByDay(exportProjRange.from, exportProjRange.to);
                 setExportProjRange(null);
-              }}>{exportingProjReport ? "Pobieranie…" : "Pobierz CSV"}</button>
+              }}>Pobierz CSV</button>
               <button className="btn-ghost" onClick={()=>setExportProjRange(null)}>Anuluj</button>
             </div>
           </div>
@@ -3013,10 +2973,10 @@ ${"NWŚCPSS"[dow]}`;
               </div>
             </div>
             <div style={{display:"flex",gap:10}}>
-              <button className="btn" disabled={exportingEmpReport} onClick={async ()=>{
-                await exportEmployeeReport(exportEmpRange.from, exportEmpRange.to);
+              <button className="btn" onClick={()=>{
+                exportEmployeeReport(exportEmpRange.from, exportEmpRange.to);
                 setExportEmpRange(null);
-              }}>{exportingEmpReport ? "Pobieranie…" : "Pobierz CSV"}</button>
+              }}>Pobierz CSV</button>
               <button className="btn-ghost" onClick={()=>setExportEmpRange(null)}>Anuluj</button>
             </div>
           </div>
