@@ -129,6 +129,7 @@ export default function App() {
   const [managers,   setManagers]   = useState([]);
   const [rates,      setRates]      = useState({});
   const [pieceRates, setPieceRates] = useState({});
+  const [wageRates,  setWageRates]  = useState({}); // project_id -> {student_rate, worker_rate}
   const [importData,      setImportData]      = useState(null);
   const [prevMonthEmps,   setPrevMonthEmps]   = useState({});
   const [multiMonthMap,   setMultiMonthMap]   = useState({});
@@ -148,6 +149,7 @@ export default function App() {
   const [loading,    setLoading]    = useState(true);
   const [saving,     setSaving]     = useState(false);
   const saveTimer = useRef({});
+  const wageRateTimer = useRef({});
 
   const now = new Date();
   const [year,  setYear]  = useState(now.getFullYear());
@@ -235,6 +237,21 @@ export default function App() {
             const prMap = {};
             prs.forEach(r => { prMap[r.project_id] = { rate: parseFloat(r.rate), unit: r.unit }; });
             setPieceRates(prMap);
+          });
+      } catch(e) {}
+
+      try {
+        supabase.from("wage_rates").select("project_id,student_rate,worker_rate")
+          .then(({ data: wrs }) => {
+            if (!wrs) return;
+            const wrMap = {};
+            wrs.forEach(r => {
+              wrMap[r.project_id] = {
+                student_rate: parseFloat(r.student_rate) || 0,
+                worker_rate:  parseFloat(r.worker_rate)  || 0,
+              };
+            });
+            setWageRates(wrMap);
           });
       } catch(e) {}
     }
@@ -595,6 +612,28 @@ export default function App() {
     await supabase.from("employees").delete().eq("id", empId);
     setEmployees(prev => prev.filter(e => e.id !== empId));
     showToast("Pracownik usunięty");
+  }
+
+  function setWageRate(projId, field, val) {
+    // val: string from the input (może być puste podczas edycji)
+    const prevForProj = wageRates[projId] || { student_rate: 0, worker_rate: 0 };
+    setWageRates(prev => ({
+      ...prev,
+      [projId]: { ...(prev[projId] || { student_rate: 0, worker_rate: 0 }), [field]: val }
+    }));
+
+    const key = `${projId}|${field}`;
+    if (wageRateTimer.current[key]) clearTimeout(wageRateTimer.current[key]);
+    wageRateTimer.current[key] = setTimeout(async () => {
+      const num = parseFloat(val);
+      const safeNum = (val === "" || val === null || isNaN(num) || num < 0) ? 0 : num;
+      const payload = {
+        project_id: projId,
+        student_rate: field === "student_rate" ? safeNum : (parseFloat(prevForProj.student_rate) || 0),
+        worker_rate:  field === "worker_rate"  ? safeNum : (parseFloat(prevForProj.worker_rate)  || 0),
+      };
+      await supabase.from("wage_rates").upsert(payload, { onConflict: "project_id" });
+    }, 600);
   }
 
   async function savePieceWork(projId, empId, day, val) {
@@ -1111,7 +1150,8 @@ export default function App() {
       "Godz. UZS","Godz. UZSO","Łącznie",
       "Stawka","Przychód","Prognoza",
       "Akord szt.","Prog. Akord szt.",
-      "Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS"
+      "Prog. UZS h","Prog. UZSO h","Prog. Total h","% UZS",
+      "Stawka UZS","Stawka UZSO","Prog. wynagr. UZS","Prog. wynagr. UZSO","Prog. wynagr. razem"
     ]];
 
     projRows.forEach(r => {
@@ -1141,7 +1181,12 @@ export default function App() {
         progUZS,
         progUZSO,
         progTotal,
-        pct+"%"
+        pct+"%",
+        r.uzsRate>0 ? r.uzsRate.toFixed(2)+" zł" : "—",
+        r.uzsoRate>0 ? r.uzsoRate.toFixed(2)+" zł" : "—",
+        r.uzsWage>0 ? r.uzsWage+" zł" : "—",
+        r.uzsoWage>0 ? r.uzsoWage+" zł" : "—",
+        r.totalWage>0 ? r.totalWage+" zł" : "—"
       ]);
     });
 
@@ -1156,7 +1201,11 @@ export default function App() {
       "—",
       Math.round(totalRevenue*100)/100+" zł",
       Math.round(forecastRev*100)/100+" zł",
-      "—","—","—","—","—","—"
+      "—","—","—","—","—","—",
+      "—","—",
+      Math.round(projRows.reduce((s,r)=>s+(r.uzsWage||0),0)*100)/100+" zł",
+      Math.round(projRows.reduce((s,r)=>s+(r.uzsoWage||0),0)*100)/100+" zł",
+      Math.round(projRows.reduce((s,r)=>s+(r.totalWage||0),0)*100)/100+" zł"
     ]);
 
     const csv = rows.map(r => r.map(v => {
@@ -2549,7 +2598,18 @@ ${"NWŚCPSS"[dow]}`;
               pieceForecast = Math.round((pieceRev + fQty * pr.rate)*100)/100;
             }
 
-            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH, pieceRev, pieceQty, pieceUnit, pieceForecast};
+            // Stawki wynagrodzeń UZS/UZSO i prognoza wynagrodzenia (godziny cały miesiąc × stawka)
+            const wr = wageRates[p.id] || { student_rate: 0, worker_rate: 0 };
+            const uzsRate  = parseFloat(wr.student_rate) || 0;
+            const uzsoRate = parseFloat(wr.worker_rate)  || 0;
+            const totalUzsH  = Math.round((sH + (fSH||0)) * 100) / 100;
+            const totalUzsoH = Math.round((wH + (fWH||0)) * 100) / 100;
+            const uzsWage  = Math.round(totalUzsH  * uzsRate  * 100) / 100;
+            const uzsoWage = Math.round(totalUzsoH * uzsoRate * 100) / 100;
+            const totalWage = Math.round((uzsWage + uzsoWage) * 100) / 100;
+
+            return {p, h, rate, rev, sH, wH, empCount, stuCount, forecast, fSH, fWH, fH, pieceRev, pieceQty, pieceUnit, pieceForecast,
+                    uzsRate, uzsoRate, uzsWage, uzsoWage, totalWage};
           })
           .filter(r=>r.h>0 || r.pieceRev>0)
           .sort((a,b)=>{
@@ -2565,6 +2625,11 @@ ${"NWŚCPSS"[dow]}`;
               case 'rate':     return dir*(a.rate-b.rate);
               case 'forecast': return dir*(a.forecast-b.forecast);
               case 'pct':      return dir*((a.h>0?a.sH/a.h:0)-(b.h>0?b.sH/b.h:0));
+              case 'uzsRate':  return dir*(a.uzsRate-b.uzsRate);
+              case 'uzsoRate': return dir*(a.uzsoRate-b.uzsoRate);
+              case 'uzsWage':  return dir*(a.uzsWage-b.uzsWage);
+              case 'uzsoWage': return dir*(a.uzsoWage-b.uzsoWage);
+              case 'totalWage':return dir*(a.totalWage-b.totalWage);
               default:         return dir*(a.rev-b.rev);
             }
           });
@@ -2691,6 +2756,11 @@ ${"NWŚCPSS"[dow]}`;
                     {label:"Prog. UZSO h",  col:"fWH"},
                     {label:"Prog. Total h", col:"fH"},
                     {label:"% UZS",         col:"pct"},
+                    {label:"Stawka UZS",    col:"uzsRate"},
+                    {label:"Stawka UZSO",   col:"uzsoRate"},
+                    {label:"Prog. wynagr. UZS",  col:"uzsWage"},
+                    {label:"Prog. wynagr. UZSO", col:"uzsoWage"},
+                    {label:"Prog. wynagr. razem", col:"totalWage"},
                   ].map(({label,col})=>(
                     <th key={col} onClick={()=>toggleSort(col)}
                       style={{ padding:"8px 10px",
@@ -2707,9 +2777,9 @@ ${"NWŚCPSS"[dow]}`;
               </thead>
               <tbody>
                 {projRows.length===0&&(
-                  <tr><td colSpan={15} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
+                  <tr><td colSpan={20} style={{ padding:24, textAlign:"center", color:C.gray4 }}>Brak danych w tym miesiącu.</td></tr>
                 )}
-                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH,pieceRev,pieceQty,pieceUnit,pieceForecast},ri)=>{
+                {projRows.map(({p,h,sH,wH,empCount,stuCount,rate,rev,forecast,fSH,fWH,fH,pieceRev,pieceQty,pieceUnit,pieceForecast,uzsRate,uzsoRate,uzsWage,uzsoWage,totalWage},ri)=>{
                   const pct=h>0?Math.round((sH/h)*100):0; const rowBg=ri%2===0?C.white:"#F8FAFC";
                   return (
                     <tr key={p.id} style={{ background:rowBg, borderBottom:`1px solid ${C.gray2}` }}>
@@ -2744,6 +2814,29 @@ ${"NWŚCPSS"[dow]}`;
                           <span style={{ fontSize:10, color:C.gray5, minWidth:26 }}>{pct}%</span>
                         </div>
                       </td>
+                      <td style={{ padding:"4px 6px", textAlign:"center" }}>
+                        <input type="number" min="0" step="0.01" placeholder="0.00"
+                          value={(wageRates[p.id]?.student_rate ?? "")}
+                          onChange={e=>setWageRate(p.id, "student_rate", e.target.value)}
+                          style={{ width:64, padding:"4px 6px", textAlign:"center", fontSize:11,
+                                   border:`1px solid ${C.gray3}`, borderRadius:6, color:"#3DAA70" }}/>
+                      </td>
+                      <td style={{ padding:"4px 6px", textAlign:"center" }}>
+                        <input type="number" min="0" step="0.01" placeholder="0.00"
+                          value={(wageRates[p.id]?.worker_rate ?? "")}
+                          onChange={e=>setWageRate(p.id, "worker_rate", e.target.value)}
+                          style={{ width:64, padding:"4px 6px", textAlign:"center", fontSize:11,
+                                   border:`1px solid ${C.gray3}`, borderRadius:6, color:C.blue }}/>
+                      </td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", color:uzsWage>0?"#3DAA70":C.gray3, fontSize:11, whiteSpace:"nowrap" }}>
+                        {uzsWage>0?`${fmt(uzsWage)} zł`:"—"}
+                      </td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", color:uzsoWage>0?C.blue:C.gray3, fontSize:11, whiteSpace:"nowrap" }}>
+                        {uzsoWage>0?`${fmt(uzsoWage)} zł`:"—"}
+                      </td>
+                      <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:700, color:totalWage>0?C.gray7:C.gray3, fontSize:12, whiteSpace:"nowrap" }}>
+                        {totalWage>0?`${fmt(totalWage)} zł`:"—"}
+                      </td>
                     </tr>
                   );
                 })}
@@ -2773,6 +2866,17 @@ ${"NWŚCPSS"[dow]}`;
                     <td style={{ padding:"9px 10px", textAlign:"right", color:C.blue, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.wH+(r.fWH||0),0)*100)/100}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"right", fontWeight:600, color:C.gray6, fontSize:12 }}>{Math.round(projRows.reduce((s,r)=>s+r.h+(r.fH||0),0)*100)/100}h</td>
                     <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>{stuPct}%</td>
+                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
+                    <td style={{ padding:"9px 10px", textAlign:"center", color:C.gray5 }}>—</td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:"#3DAA70", fontSize:12 }}>
+                      {fmt(Math.round(projRows.reduce((s,r)=>s+(r.uzsWage||0),0)*100)/100)} zł
+                    </td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", color:C.blue, fontSize:12 }}>
+                      {fmt(Math.round(projRows.reduce((s,r)=>s+(r.uzsoWage||0),0)*100)/100)} zł
+                    </td>
+                    <td style={{ padding:"9px 10px", textAlign:"right", fontWeight:700, color:C.gray7, fontSize:13 }}>
+                      {fmt(Math.round(projRows.reduce((s,r)=>s+(r.totalWage||0),0)*100)/100)} zł
+                    </td>
                   </tr>
                 )}
               </tbody>
