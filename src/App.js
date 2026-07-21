@@ -2441,7 +2441,53 @@ ${"NWŚCPSS"[dow]}`;
         // dzisiejszy dzień (jeśli trwa) może być jeszcze nieuzupełniony przez część projektów,
         // więc nie wliczamy go do bazy wzorca (żeby nie zaniżać prognozy).
         const isCurrentMonth = year===today.getFullYear() && month===today.getMonth();
-        const patternDaysPassed = isCurrentMonth ? Math.max(0, today.getDate()-1) : daysTotal;
+
+        // ── Dynamiczne wykrywanie "ostatniego kompletnego dnia" ──────────────
+        // Zamiast sztywno zakładać, że tylko DZISIAJ może być niekompletne,
+        // cofamy się dzień po dniu i sprawdzamy, czy wpisane godziny/sztuki
+        // odpowiadają temu, czego moglibyśmy się spodziewać dla tego dnia
+        // tygodnia (na podstawie starszych, na pewno zamkniętych danych).
+        // Jeśli dzień wygląda na niedopełniony (np. ktoś wpisze godziny
+        // z opóźnieniem), traktujemy go jako "przyszły" i liczymy dla niego
+        // prognozę zamiast realnej (zaniżonej) wartości.
+        const COMPLETENESS_SAFETY_WINDOW = 3;   // dni z zasady traktowane jako potencjalnie niepewne
+        const COMPLETENESS_THRESHOLD     = 0.7; // próg: <70% oczekiwanej wartości = dzień niekompletny
+
+        function computeLastCompleteDay(getDayValue) {
+          if (!isCurrentMonth) return daysTotal; // miesiące zamknięte są zawsze w pełni kompletne
+          if (daysPassed <= 0) return 0;
+
+          // Wzorzec "referencyjny" budujemy tylko z dni starszych niż okno bezpieczeństwa,
+          // żeby sam wzorzec nie był skażony ewentualnymi niedokończonymi wpisami.
+          const preliminaryCutoff = Math.max(0, daysPassed - COMPLETENESS_SAFETY_WINDOW);
+          const preDowV = [0,0,0,0,0,0,0], preDowC = [0,0,0,0,0,0,0];
+          for (let d = 1; d <= preliminaryCutoff; d++) {
+            const v = getDayValue(d);
+            if (v > 0) {
+              const dow = new Date(year, month, d).getDay();
+              preDowV[dow] += v; preDowC[dow]++;
+            }
+          }
+          const preDowAvg = preDowV.map((v,i) => preDowC[i] > 0 ? v / preDowC[i] : 0);
+
+          // Cofamy się od dzisiaj, dopóki dzień wygląda na niedopełniony.
+          let lastComplete = daysPassed;
+          const earliestCheck = Math.max(1, daysPassed - COMPLETENESS_SAFETY_WINDOW - 2);
+          for (let d = daysPassed; d >= earliestCheck; d--) {
+            const dow = new Date(year, month, d).getDay();
+            const expected = preDowAvg[dow];
+            const actual = getDayValue(d);
+            // Jeśli nie mamy oczekiwań dla tego dnia tygodnia (np. nikt nigdy
+            // tu nie pracował w niedzielę), nie potrafimy ocenić kompletności —
+            // nie cofamy granicy dalej.
+            if (expected > 0 && actual < expected * COMPLETENESS_THRESHOLD) {
+              lastComplete = d - 1;
+            } else {
+              break;
+            }
+          }
+          return Math.max(0, lastComplete);
+        }
 
         // Dni robocze per miesiąc (bez weekendów i świąt)
         const WORKING_DAYS = {
@@ -2537,12 +2583,20 @@ ${"NWŚCPSS"[dow]}`;
             const wH       = Math.round(workerEmps.reduce((s,e)=>s+empTotal(p.id,e.id),0)*100)/100;
             const empCount = employees.filter(e=>empTotal(p.id,e.id)>0).length;
             const stuCount = studentEmps.filter(e=>empTotal(p.id,e.id)>0).length;
+            // Granica "ostatniego kompletnego dnia" dla TEGO projektu — może się
+            // różnić między projektami, bo różne zespoły/projekty mogą mieć
+            // różne opóźnienia we wpisywaniu godzin.
+            const lastComplete = computeLastCompleteDay(d => dayTotal(p.id, d));
+
             // Prognoza per projekt: wzorzec dni tygodnia × stawka projektu
-            // Pomijamy dni z 0h (brak danych) przy liczeniu wzorca
+            // Wzorzec i "realne" godziny liczymy tylko do lastComplete —
+            // dni po nim (łącznie z dzisiejszym, a razie potrzeby też wczorajszym
+            // itd.) traktujemy jako niepewne i doszacowujemy prognozą zamiast
+            // brać ich (potencjalnie zaniżone) wpisane wartości.
             const pDowH  = [0,0,0,0,0,0,0]; const pDowC  = [0,0,0,0,0,0,0];
             const pDowSH = [0,0,0,0,0,0,0]; const pDowSC = [0,0,0,0,0,0,0];
             const pDowWH = [0,0,0,0,0,0,0]; const pDowWC = [0,0,0,0,0,0,0];
-            for (let d=1;d<=patternDaysPassed;d++){
+            for (let d=1;d<=lastComplete;d++){
               const dow=new Date(year,month,d).getDay();
               const dh=dayTotal(p.id,d);
               if(dh>0){ pDowH[dow]+=dh; pDowC[dow]++; }
@@ -2555,7 +2609,7 @@ ${"NWŚCPSS"[dow]}`;
             const pDowAvgS = pDowSH.map((hh,i)=>pDowSC[i]>0?hh/pDowSC[i]:0);
             const pDowAvgW = pDowWH.map((hh,i)=>pDowWC[i]>0?hh/pDowWC[i]:0);
             let fH=0, fSH=0, fWH=0;
-            for(let d=daysPassed+1;d<=daysTotal;d++){
+            for(let d=lastComplete+1;d<=daysTotal;d++){
               const dow=new Date(year,month,d).getDay();
               fH  += pDowAvg[dow];
               fSH += pDowAvgS[dow];
@@ -2564,7 +2618,13 @@ ${"NWŚCPSS"[dow]}`;
             fH  = Math.round(fH*100)/100;
             fSH = Math.round(fSH*100)/100;
             fWH = Math.round(fWH*100)/100;
-            const forecast = rate>0 ? Math.round((rev + fH*rate)*100)/100 : 0;
+            // Realny przychód liczymy tylko do lastComplete — dni po nim wchodzą
+            // wyłącznie przez prognozę (fH), więc nie liczymy ich podwójnie i nie
+            // bazujemy na ich niedopełnionych wpisach.
+            const revThroughComplete = rate>0
+              ? Math.round(Array.from({length:lastComplete},(_,i)=>dayTotal(p.id,i+1)).reduce((a,b)=>a+b,0) * rate * 100)/100
+              : 0;
+            const forecast = rate>0 ? Math.round((revThroughComplete + fH*rate)*100)/100 : 0;
             const pieceRev = projPieceRevTotal(p);
             const pr = pieceRates[p.id];
             const pieceQty = pr ? (() => {
@@ -2579,11 +2639,14 @@ ${"NWŚCPSS"[dow]}`;
             })() : 0;
             const pieceUnit = pr ? pr.unit : '';
 
-            // Prognoza akordu wg wzorca dni tygodnia
+            // Prognoza akordu wg wzorca dni tygodnia — z tą samą logiką
+            // dynamicznej granicy kompletności, liczoną osobno dla akordu
+            // (może mieć inny rytm wpisywania niż godziny).
             let pieceForecast = 0;
             if (pr && pr.rate > 0) {
+              const lastCompletePW = computeLastCompleteDay(d => getPWDay(p.id, d));
               const pwDowH = [0,0,0,0,0,0,0]; const pwDowC = [0,0,0,0,0,0,0];
-              for (let d=1; d<=patternDaysPassed; d++) {
+              for (let d=1; d<=lastCompletePW; d++) {
                 const dqty = getPWDay(p.id, d);
                 if (dqty > 0) {
                   const dow = new Date(year,month,d).getDay();
@@ -2592,10 +2655,13 @@ ${"NWŚCPSS"[dow]}`;
               }
               const pwDowAvg = pwDowH.map((hh,i) => pwDowC[i]>0 ? hh/pwDowC[i] : 0);
               let fQty = 0;
-              for (let d=daysPassed+1; d<=daysTotal; d++) {
+              for (let d=lastCompletePW+1; d<=daysTotal; d++) {
                 fQty += pwDowAvg[new Date(year,month,d).getDay()];
               }
-              pieceForecast = Math.round((pieceRev + fQty * pr.rate)*100)/100;
+              const pieceRevThroughComplete = Math.round(
+                Array.from({length:lastCompletePW},(_,i)=>getPWDay(p.id,i+1)).reduce((a,b)=>a+b,0) * pr.rate * 100
+              )/100;
+              pieceForecast = Math.round((pieceRevThroughComplete + fQty * pr.rate)*100)/100;
             }
 
             // Stawki wynagrodzeń UZS/UZSO i prognoza wynagrodzenia (godziny cały miesiąc × stawka)
